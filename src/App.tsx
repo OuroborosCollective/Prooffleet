@@ -188,7 +188,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requestId: pendingConsent.id,
+          requestId: pendingConsent.requestId,
           decision,
           operatorIdentity: "Operator",
           reason,
@@ -236,7 +236,7 @@ export default function App() {
         )}
 
         {/* Mission Analytics Charts */}
-        <MissionAnalytics totalMissionsRun={telemetry?.totalMissionsRun || 1} />
+        <MissionAnalytics totalMissionsRun={telemetry?.totalMissionsRun ?? 0} />
 
         {/* Execution Stream + Evidence Ledger Side-by-Side */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[460px]">

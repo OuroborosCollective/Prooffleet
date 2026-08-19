@@ -81,7 +81,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="hidden lg:flex items-center gap-2 pl-2 border-l border-slate-200 text-xs text-slate-600">
             <div className="flex items-center gap-1">
               <Layers className="w-3.5 h-3.5 text-slate-400" />
-              <span>{telemetry?.totalEvidenceBlocksSealed || 1} Blocks</span>
+              <span>{telemetry?.totalEvidenceBlocksSealed ?? 0} Blocks</span>
             </div>
             <div className="flex items-center gap-1 ml-2">
               <Cpu className="w-3.5 h-3.5 text-blue-500" />

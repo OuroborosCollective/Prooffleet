@@ -40,9 +40,9 @@ export const ConsentGateModal: React.FC<ConsentGateModalProps> = ({
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
               Proposed Operation
             </span>
-            <p className="text-sm font-bold text-slate-900">{request.actionName}</p>
+            <p className="text-sm font-bold text-slate-900">{request.spec.actionName}</p>
             <p className="text-xs text-slate-500 font-mono mt-0.5">
-              Target: {request.targetResource}
+              Target: {request.spec.targetResource}
             </p>
           </div>
 
@@ -51,7 +51,7 @@ export const ConsentGateModal: React.FC<ConsentGateModalProps> = ({
             <div>
               <p className="font-semibold text-amber-900 text-xs">Risk Assessment</p>
               <p className="text-[11px] text-amber-800 mt-0.5">
-                {request.riskJustification}
+                {request.justification}
               </p>
             </div>
           </div>
@@ -61,7 +61,7 @@ export const ConsentGateModal: React.FC<ConsentGateModalProps> = ({
               Action Parameters
             </span>
             <pre className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] text-slate-800 font-mono overflow-x-auto">
-              {JSON.stringify(request.parameters, null, 2)}
+              {JSON.stringify(request.spec.parameters, null, 2)}
             </pre>
           </div>
         </div>
