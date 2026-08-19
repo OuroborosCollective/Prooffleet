@@ -1,0 +1,6 @@
+{
+  "name": "ProofFleet",
+  "description": "A verifiable multi-agent system for the Google All Things Agentic Hackathon.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
