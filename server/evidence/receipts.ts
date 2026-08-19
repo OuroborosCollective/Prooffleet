@@ -66,7 +66,7 @@ export class ReceiptChain {
       createdAt: new Date().toISOString(),
     };
     this.receipts.push(receipt);
-    return { ...receipt };
+    return structuredClone(receipt);
   }
 
   /** Recompute a single receipt's hash. */
@@ -87,8 +87,12 @@ export class ReceiptChain {
     return { isValid: true, brokenAt: null };
   }
 
-  /** Read-only snapshot for verifiers (shallow copies; treat as immutable). */
+  /**
+   * Read-only snapshot for verifiers — strukturierte Tiefenkopien
+   * (EvidenceReceipt-Felder sind aktuell skalar; die Tiefenkopie haertet
+   * gegen kuenftige verschachtelte Felder ab).
+   */
   exportReceipts(): EvidenceReceipt[] {
-    return this.receipts.map((r) => ({ ...r }));
+    return structuredClone(this.receipts);
   }
 }

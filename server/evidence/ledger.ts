@@ -84,7 +84,9 @@ export class EvidenceLedger {
       blockIndex: this.blocks.length,
       agentId: input.agentId,
       claim: input.claim,
-      payload: input.payload,
+      // Tiefenkopie: spaetere Mutationen am Input-Objekt duerfen den
+      // versiegelten Block nicht veraendern (Node >= 20: structuredClone).
+      payload: structuredClone(input.payload),
       payloadHash: sha256Hex(canonicalJson(input.payload)),
       manifestHash: input.manifestHash,
       missionRevision: input.missionRevision,
@@ -99,12 +101,16 @@ export class EvidenceLedger {
       signature: signBlockHash(blockHash),
     };
     this.blocks.push(block);
-    return { ...block };
+    return structuredClone(block);
   }
 
-  /** Read-only snapshot (shallow copies; treat as immutable). */
+  /**
+   * Read-only snapshot — strukturierte Tiefenkopien. Mutationen an
+   * verschachtelten Payloads eines exportierten Blocks veraendern das
+   * Live-Ledger NICHT (verifyChain bleibt isValid).
+   */
   getChain(): EvidenceBlock[] {
-    return this.blocks.map((b) => ({ ...b }));
+    return structuredClone(this.blocks);
   }
 
   /** Recompute every hash and the chain linkage; never trusts stored values. */

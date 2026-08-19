@@ -5,6 +5,10 @@
  * Garantien:
  * - Idempotency: gleiche operationId -> gespeichertes finales Result,
  *   handler.apply wird NICHT erneut aufgerufen.
+ * - In-Flight-Dedup: konkurrierende execute()-Aufrufe mit gleicher
+ *   operationId waehrend einer laufenden Ausfuehrung awaiten dasselbe
+ *   Promise; handler.apply laeuft exakt einmal. Nach Abschluss wandert
+ *   das Result in die Idempotency-Map.
  * - Readback-before-retry: fuer kind 'write'/'execute' laeuft VOR dem
  *   Erstversuch und VOR jedem Retry handler.readback(spec). Zeigt der
  *   Readback den Zielzustand bereits, gilt die Operation als
@@ -116,6 +120,7 @@ function interpretReadback(value: unknown): ReadbackVerdict {
 
 export class OperationExecutor {
   private readonly finalResults = new Map<string, OperationResult>();
+  private readonly inFlight = new Map<string, Promise<OperationResult>>();
   private readonly grantValidator: GrantValidator;
   private readonly maxAttempts: number;
   private readonly baseBackoffMs: number;
@@ -141,6 +146,29 @@ export class OperationExecutor {
       return cached;
     }
 
+    // In-Flight-Dedup: laeuft fuer diese operationId bereits eine
+    // Ausfuehrung, awaiten konkurrierende Aufrufe dasselbe Promise.
+    // Der Cache wird erst in finish() gesetzt — ohne diese Sperre koennten
+    // zwei parallele execute()-Aufrufe handler.apply doppelt ausfuehren.
+    const running = this.inFlight.get(spec.operationId);
+    if (running) {
+      return running;
+    }
+    const execution = this.executeExclusive(spec, handler, grant).finally(
+      () => {
+        this.inFlight.delete(spec.operationId);
+      },
+    );
+    this.inFlight.set(spec.operationId, execution);
+    return execution;
+  }
+
+  /** Exklusive Ausfuehrung — pro operationId laeuft hoechstens eine Instanz. */
+  private async executeExclusive(
+    spec: OperationSpec,
+    handler: OperationHandler,
+    grant?: ConsentGrant,
+  ): Promise<OperationResult> {
     const needsConsent = spec.kind === 'write' || spec.kind === 'execute';
 
     if (needsConsent) {
