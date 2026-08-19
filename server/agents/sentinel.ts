@@ -85,8 +85,8 @@ export function checkPermissionConformance(
     }
     const missing = expected.filter((p) => !permissions.includes(p));
     const extra = permissions.filter((p) => !expected.includes(p));
-    if (missing.length > 0) violations.push({ role, detail: `missing permissions: ${missing.join(', ')}` });
-    if (extra.length > 0) violations.push({ role, detail: `excess permissions: ${extra.join(', ')}` });
+    if (missing.length > 0) violations.push({ role, detail: `missing permissions: ${missing.join(',')}` });
+    if (extra.length > 0) violations.push({ role, detail: `excess permissions: ${extra.join(',')}` });
   }
   return violations;
 }
