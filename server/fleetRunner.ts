@@ -1,14 +1,69 @@
+/**
+ * fleetRunner.ts — Orchestriert die acht echten Agentenmodule aus server/agents/
+ * (SPEC §4/§6).
+ *
+ * Haerte-Garantien:
+ * - KEIN Auto-Consent: die Mission geht in 'paused_for_consent' und bleibt dort,
+ *   bis /api/consent/respond einen echten Operator-Grant liefert
+ *   (resumeWithGrant). Es gibt keinen Timer und kein Auto-Approve.
+ * - Rollenkontexte strikt: nur der gatekeeper bekommt requestConsent; nur
+ *   builder/operator bekommen Executor-Zugang (hier: bewusst KEIN Executor,
+ *   solange kein provisioniertes Execution-Target existiert — der Operator
+ *   meldet dann ehrlich 'not_executed').
+ * - finalVerdict.judgeVerdict kommt vom Judge (server/evidence/judge) ueber die
+ *   reale Evidence + Receipts. Keine hartcodierten Scores.
+ */
+
 import { getGenAI } from "./gemini";
-import { FLEET_AGENTS } from "./contracts";
-import { evidenceLedger } from "./evidenceEngine";
-import { consentManager } from "./consentEngine";
-import { Mission, ExecutionStep, AgentRole, ConsentRequest } from "../src/types/index";
+import {
+  FLEET,
+  createOrchestratorAgent,
+  createScoutAgent,
+  createOperatorAgent,
+  type FleetAgent,
+  type AgentContext,
+  type AgentOutput,
+  type LlmProvider,
+} from "./agents/index";
+import {
+  EvidenceLedger,
+  ReceiptChain,
+  Judge,
+  MemoryStore,
+  canonicalJson,
+  sha256Hex,
+} from "./evidence/index";
+import { ConsentEngine } from "./consent/consentEngine";
+import type {
+  AgentRole,
+  ConsentGrant,
+  ConsentRequest,
+  ExecutionStep,
+  Mission,
+  OperationSpec,
+  VerdictRecord,
+} from "../src/types/index";
+
+const PRE_GATE_ROLES = ["orchestrator", "scout", "builder", "analyst", "sentinel", "auditor"] as const;
+const FINALIZE_CLAIM = "mission finalized";
+
+interface FleetEvent {
+  type: string;
+  data: unknown;
+}
 
 export class FleetRunner {
+  private ledger = new EvidenceLedger();
+  private receipts = new ReceiptChain();
+  private memoryStore = new MemoryStore();
+  private consentEngine = new ConsentEngine();
   private activeMission: Mission | null = null;
-  private eventListeners: Array<(event: { type: string; data: unknown }) => void> = [];
+  private eventListeners: Array<(event: FleetEvent) => void> = [];
+  private missionsRun = 0;
 
-  public subscribe(listener: (event: { type: string; data: unknown }) => void) {
+  // ------------------------------------------------------------------ events
+
+  public subscribe(listener: (event: FleetEvent) => void) {
     this.eventListeners.push(listener);
     return () => {
       this.eventListeners = this.eventListeners.filter((l) => l !== listener);
@@ -25,9 +80,37 @@ export class FleetRunner {
     });
   }
 
+  // ------------------------------------------------------------------ state
+
   public getActiveMission(): Mission | null {
     return this.activeMission;
   }
+
+  public getLedger(): EvidenceLedger {
+    return this.ledger;
+  }
+
+  public getReceiptChain(): ReceiptChain {
+    return this.receipts;
+  }
+
+  public getConsentEngine(): ConsentEngine {
+    return this.consentEngine;
+  }
+
+  public getMissionsRun(): number {
+    return this.missionsRun;
+  }
+
+  /** Reset fuer /api/evidence/reset: neue Ledger/Receipt/Memory-Instanzen. */
+  public resetEvidence(): void {
+    this.ledger = new EvidenceLedger();
+    this.receipts = new ReceiptChain();
+    this.memoryStore = new MemoryStore();
+    this.activeMission = null;
+  }
+
+  // ------------------------------------------------------------------ mission
 
   public async startMission(
     title: string,
@@ -38,8 +121,11 @@ export class FleetRunner {
     requireConsentForWrite: boolean = true
   ): Promise<Mission> {
     const missionId = `mission-${Date.now().toString(36)}`;
-    
-    // Create new mission state
+    const missionRevision = 1;
+    const manifestHash = sha256Hex(
+      canonicalJson({ missionId, inputGoal, requireConsentForWrite, missionRevision })
+    );
+
     const mission: Mission = {
       id: missionId,
       title: title || "Autonomous Multi-Agent Mission",
@@ -53,17 +139,17 @@ export class FleetRunner {
       startedAt: new Date().toISOString(),
       activeAgentId: "orchestrator",
       steps: [],
-      evidenceChain: evidenceLedger.getChain(),
+      evidenceChain: [],
       consentRequests: [],
     };
 
     this.activeMission = mission;
+    this.missionsRun += 1;
     this.emit("mission_started", mission);
 
-    // Asynchronously run the mission pipeline
-    this.executePipeline(mission).catch((err) => {
+    this.executePreGate(mission, manifestHash, missionRevision).catch((err) => {
       console.error("Mission execution pipeline failed:", err);
-      if (this.activeMission) {
+      if (this.activeMission?.id === mission.id) {
         this.activeMission.status = "failed";
         this.emit("mission_failed", { error: String(err) });
       }
@@ -72,224 +158,340 @@ export class FleetRunner {
     return mission;
   }
 
-  private async executePipeline(mission: Mission) {
-    const addStep = (agentId: AgentRole, type: ExecutionStep["type"], content: string, metadata?: Record<string, unknown>, evidenceBlockId?: string) => {
-      const step: ExecutionStep = {
-        stepId: `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        agentId,
-        timestamp: new Date().toISOString(),
-        type,
-        content,
-        metadata,
-        evidenceBlockId,
-      };
-      mission.steps.push(step);
-      this.emit("execution_step", step);
-      return step;
-    };
+  /**
+   * Resume-Pfad: wird AUSSCHLIESSLICH von /api/consent/respond mit einem
+   * echten ConsentGrant der ConsentEngine aufgerufen. Kein Timer, kein
+   * Auto-Approve — ohne Grant passiert hier nichts.
+   */
+  public async resumeWithGrant(grant: ConsentGrant): Promise<Mission | null> {
+    const mission = this.activeMission;
+    if (!mission || mission.status !== "paused_for_consent") {
+      return null;
+    }
+    const request = this.consentEngine.getRequest(grant.requestId);
+    if (!request) {
+      return null;
+    }
+    const validation = this.consentEngine.validateGrantForOperation(
+      grant,
+      request.spec as OperationSpec
+    );
+    if (!validation.valid) {
+      this.addStep(mission, "gatekeeper", "consent_gate",
+        `Consent grant rejected by validation: ${validation.reason}`);
+      return mission;
+    }
 
+    const missionRevision = request.missionRevision;
+    const manifestHash = sha256Hex(
+      canonicalJson({
+        missionId: mission.id,
+        inputGoal: mission.inputGoal,
+        requireConsentForWrite: mission.requireConsentForWrite,
+        missionRevision,
+      })
+    );
+
+    mission.status = "running";
+
+    if (grant.decision === "APPROVED") {
+      this.addStep(mission, "gatekeeper", "consent_gate",
+        `Operator consent APPROVED by ${grant.operatorIdentity} — resuming mission.`,
+        { requestId: grant.requestId, operationHash: grant.operationHash });
+
+      // Operator bekommt den Grant + Spec ueber den Context. Bewusst KEIN
+      // Executor injiziert: ohne provisioniertes Execution-Target meldet der
+      // Operator ehrlich 'not_executed' statt Erfolg zu behaupten.
+      const operator = createOperatorAgent();
+      const sharedMemory = this.memoryStoreFor("operator");
+      sharedMemory.set("approvedConsent", grant);
+      sharedMemory.set("pendingOperationSpec", request.spec);
+      await this.runAgent(mission, operator, manifestHash, missionRevision);
+    } else {
+      this.addStep(mission, "gatekeeper", "consent_gate",
+        `Operator consent REJECTED by ${grant.operatorIdentity} — mission aborted by human decision.`,
+        { requestId: grant.requestId });
+    }
+
+    this.finalizeMission(mission, manifestHash, missionRevision, grant.decision === "APPROVED");
+    return mission;
+  }
+
+  // ------------------------------------------------------------------ pipeline
+
+  private llmProvider(): LlmProvider | undefined {
     const genAI = getGenAI();
-
-    // 1. FLEET COMMANDER (ORCHESTRATOR) - Goal Decomposition & Plan Generation
-    mission.activeAgentId = "orchestrator";
-    addStep("orchestrator", "status_change", "Fleet Commander activated. Formulating Directed Acyclic Task Graph (DAG)...");
-
-    let decomposition = "";
-    if (genAI) {
-      try {
-        const prompt = `You are Fleet Commander (ORCHESTRATOR-01), the master coordinator of ProofFleet.
-Mission Goal: "${mission.inputGoal}"
-Assurance Strictness: "${mission.strictness}"
-Thinking Level: "${mission.thinkingLevel}"
-
-Decompose this goal into verifiable agentic milestones for:
-- Scout (Research & Grounding)
-- Builder (Code & Architecture)
-- Analyst (Data & Logic)
-- Sentinel (Security & Vulnerability Audit)
-- Auditor (Cryptographic Evidence Verification)
-- Gatekeeper (Consent Governance)
-- Operator (Final Sealing & Delivery)
-
-Provide a crisp, professional 3-bullet execution plan.`;
-
+    if (!genAI) return undefined;
+    return {
+      generate: async (prompt: string) => {
         const response = await genAI.models.generateContent({
           model: "gemini-3.7-flash",
           contents: prompt,
         });
-        decomposition = response.text || "Execution plan synthesized.";
-      } catch (e) {
-        decomposition = "1. Dispatch Scout for grounded intelligence extraction.\n2. Execute Sentinel zero-trust policy analysis.\n3. Verify evidence chain and request Gatekeeper authorization.";
+        return response.text || "";
+      },
+    };
+  }
+
+  private buildFleet(): FleetAgent[] {
+    const llm = this.llmProvider();
+    // Nur die Rollen, die laut SPEC einen Provider sinnvoll nutzen, bekommen ihn.
+    return FLEET.map((agent) => {
+      if (agent.role === "orchestrator") return createOrchestratorAgent(llm);
+      if (agent.role === "scout") return createScoutAgent({ llm });
+      return agent;
+    });
+  }
+
+  private memoryStoreFor(role: string) {
+    return {
+      get: (k: string) => this.memoryStore.get(role, k)?.value,
+      set: (k: string, v: unknown) => {
+        this.memoryStore.set(role, k, v);
+      },
+    };
+  }
+
+  private async executePreGate(mission: Mission, manifestHash: string, missionRevision: number) {
+    const fleet = this.buildFleet();
+    const byRole = new Map(fleet.map((a) => [a.role, a]));
+
+    for (const role of PRE_GATE_ROLES) {
+      const agent = byRole.get(role);
+      if (!agent) throw new Error(`fleet agent missing for role: ${role}`);
+
+      // Echte Snapshots fuer analyst/sentinel/auditor in den Context legen.
+      if (role === "analyst" || role === "sentinel") {
+        this.memoryStoreFor(role).set("evidenceSnapshot", this.evidenceSnapshot());
       }
-    } else {
-      decomposition = `1. [Scout & Intelligence]: Extract verifiable facts and citations for "${mission.inputGoal}".\n2. [Sentinel & Security]: Run vulnerability and policy compliance inspection.\n3. [Auditor & Gatekeeper]: Seal SHA-256 evidence blocks, verify truth integrity, and enforce Human-in-the-Loop consent before delivery.`;
+      if (role === "sentinel") {
+        this.memoryStoreFor(role).set(
+          "fleetRoles",
+          fleet.map((a) => ({ role: a.role, permissions: a.permissions }))
+        );
+      }
+      if (role === "auditor") {
+        this.memoryStoreFor(role).set("chainSnapshot", this.ledger.getChain());
+      }
+
+      await this.runAgent(mission, agent, manifestHash, missionRevision);
     }
 
-    addStep("orchestrator", "thought", decomposition);
-    const orchEvidence = evidenceLedger.sealEvidence(
-      "orchestrator",
-      `Mission Goal decomposed into 7 verifiable milestones: ${mission.inputGoal.slice(0, 80)}...`,
-      "system_trace",
-      { goal: mission.inputGoal, strictness: mission.strictness, plan: decomposition },
-      99
-    );
-    addStep("orchestrator", "evidence_sealed", `Sealed Evidence Block #${orchEvidence.blockIndex} [SHA256: ${orchEvidence.hash.slice(0, 16)}...]`, undefined, orchEvidence.id);
-    await new Promise((r) => setTimeout(r, 700));
+    // GATEKEEPER: erstellt den Consent-Request und pausiert die Mission.
+    // KEIN Warten, KEIN Auto-Approve — Resume nur via resumeWithGrant().
+    if (mission.requireConsentForWrite) {
+      const gatekeeper = byRole.get("gatekeeper");
+      if (!gatekeeper) throw new Error("fleet agent missing for role: gatekeeper");
+      await this.runAgent(mission, gatekeeper, manifestHash, missionRevision);
+      mission.status = "paused_for_consent";
+      this.emit("mission_paused", { missionId: mission.id });
+      return;
+    }
 
-    // 2. SCOUT (RESEARCHER) - Fact Retrieval & Citations
-    mission.activeAgentId = "researcher";
-    addStep("researcher", "status_change", "Scout activated. Querying knowledge graphs and extracting grounded evidence...");
+    // requireConsentForWrite=false: ehrlich markieren, dass kein Consent noetig war.
+    const operator = byRole.get("operator");
+    if (operator) {
+      await this.runAgent(mission, operator, manifestHash, missionRevision);
+    }
+    this.finalizeMission(mission, manifestHash, missionRevision, true);
+  }
 
-    let researchFindings = "";
-    const citations = [
-      { title: "Google Cloud Agentic Architecture Best Practices", uri: "https://cloud.google.com/agents/architecture", confidence: 0.98 },
-      { title: "NIST AI Risk Management Framework (RMF 1.0)", uri: "https://csrc.nist.gov/pubs/ai/100/1/final", confidence: 0.96 },
-      { title: "IEEE Verifiable Multi-Agent Communication Standards", uri: "https://standards.ieee.org/project/3152.html", confidence: 0.94 },
-    ];
+  private evidenceSnapshot() {
+    return this.ledger.getChain().map((b) => ({
+      evidenceType:
+        typeof (b.payload as Record<string, unknown> | null)?.evidenceType === "string"
+          ? (b.payload as Record<string, unknown>).evidenceType
+          : "unknown",
+      claim: b.claim,
+      createdBy: b.agentId,
+    }));
+  }
 
-    if (genAI) {
-      try {
-        const response = await genAI.models.generateContent({
-          model: "gemini-3.7-flash",
-          contents: `As Scout (SCOUT-02), provide 3 grounded technical facts supporting: "${mission.inputGoal}". Keep it concise and rigorous.`,
+  private async runAgent(
+    mission: Mission,
+    agent: FleetAgent,
+    manifestHash: string,
+    missionRevision: number
+  ): Promise<AgentOutput> {
+    const role = agent.role as AgentRole;
+    mission.activeAgentId = role;
+    this.addStep(mission, role, "status_change", `${role} activated.`);
+
+    const memory = this.memoryStoreFor(agent.role);
+    const ctx: AgentContext = {
+      missionId: mission.id,
+      missionRevision,
+      inputGoal: mission.inputGoal,
+      memory,
+      emitEvidence: (claim, evidenceType, payload) => {
+        const block = this.ledger.seal({
+          agentId: agent.role,
+          claim,
+          payload: { ...payload, evidenceType },
+          manifestHash,
+          missionRevision,
         });
-        researchFindings = response.text || "Extracted 3 verified facts with provenance references.";
-      } catch (e) {
-        researchFindings = "Retrieved primary domain specifications, security benchmarks, and empirical integrity constraints.";
-      }
-    } else {
-      researchFindings = `Verified facts extracted:
-- Evidence provenance requires cryptographic link from agent identity to payload hash.
-- Multi-agent safety requires separation of duties between Generator (Builder) and Verifier (Auditor).
-- Zero-trust guardrails must intercept sensitive state mutations at the Gatekeeper level.`;
-    }
-
-    addStep("researcher", "thought", researchFindings, { citations });
-    const scoutEvidence = evidenceLedger.sealEvidence(
-      "researcher",
-      `Grounded Intelligence & Citations established for target domain`,
-      "grounded_fact",
-      { topic: mission.inputGoal, findings: researchFindings, citationsCount: citations.length },
-      97,
-      citations
-    );
-    addStep("researcher", "evidence_sealed", `Sealed Evidence Block #${scoutEvidence.blockIndex} [SHA256: ${scoutEvidence.hash.slice(0, 16)}...] with ${citations.length} citations`, undefined, scoutEvidence.id);
-    await new Promise((r) => setTimeout(r, 700));
-
-    // 3. SENTINEL (SECURITY & COMPLIANCE)
-    mission.activeAgentId = "sentinel";
-    addStep("sentinel", "status_change", "Sentinel activated. Executing zero-trust vulnerability and threat matrix scan...");
-    
-    const securityCheck = {
-      promptInjectionRisk: "NEGLIGIBLE",
-      secretsExposure: "NONE_DETECTED",
-      permissionScope: "LEAST_PRIVILEGE_ENFORCED",
-      policyViolations: 0,
-      confidence: "99.4%",
+        this.receipts.issueReceipt({
+          missionId: mission.id,
+          missionRevision,
+          manifestHash,
+          payloadHash: block.payloadHash,
+          createdBy: role,
+        });
+        this.addStep(
+          mission,
+          role,
+          "evidence_sealed",
+          `Sealed Evidence Block #${block.blockIndex} [SHA256: ${block.blockHash.slice(0, 16)}...]`,
+          undefined,
+          block.blockHash
+        );
+        return block.blockHash;
+      },
+      logger: (msg) => console.log(`[fleet:${agent.role}] ${msg}`),
     };
 
-    addStep("sentinel", "thought", `Zero-Trust Scan Complete:\n• Prompt Injection Risk: ${securityCheck.promptInjectionRisk}\n• Secrets Exposure: ${securityCheck.secretsExposure}\n• Enforced Scope: ${securityCheck.permissionScope}`);
-    const sentinelEvidence = evidenceLedger.sealEvidence(
-      "sentinel",
-      "Zero-Trust Security & Policy Compliance passed with 0 violations",
-      "policy_check",
-      securityCheck,
-      99
-    );
-    addStep("sentinel", "evidence_sealed", `Sealed Evidence Block #${sentinelEvidence.blockIndex} [SHA256: ${sentinelEvidence.hash.slice(0, 16)}...]`, undefined, sentinelEvidence.id);
-    await new Promise((r) => setTimeout(r, 700));
-
-    // 4. GATEKEEPER (HUMAN-IN-THE-LOOP CONSENT GATE)
-    mission.activeAgentId = "gatekeeper";
-    addStep("gatekeeper", "status_change", "Gatekeeper activated. Evaluating action impact and human consent requirements...");
-
-    if (mission.requireConsentForWrite) {
-      const consentReq: ConsentRequest = consentManager.createRequest(
-        "operator",
-        "Authorize Autonomous Execution & Ledger Sealing",
-        "Production ProofFleet Substrate",
-        {
-          missionId: mission.id,
-          goal: mission.inputGoal,
-          evidenceBlocksCount: evidenceLedger.getChain().length,
-          riskRating: "MEDIUM",
-        },
-        "MEDIUM",
-        "Sealing cryptographic audit trail and executing downstream operations requires verified operator consent."
-      );
-
-      mission.consentRequests.push(consentReq);
-      mission.status = "paused_for_consent";
-      addStep("gatekeeper", "consent_gate", `Human Consent Gate Triggered: Action '${consentReq.actionName}' requires operator authorization.`, { requestId: consentReq.id });
-      this.emit("consent_requested", consentReq);
-
-      // Wait up to 6 seconds for simulated auto-consent in test mode if user doesn't interact immediately, or keep paused
-      // In interactive mode, the user can click Approve in UI
-      await new Promise((r) => setTimeout(r, 1200));
-
-      // Auto-approve if standard run, or let UI approve
-      if (consentReq.status === "PENDING") {
-        consentManager.respond(consentReq.id, "APPROVED", "Operator (Auto-Validated)", "Cryptographic token validated.");
-        consentReq.status = "APPROVED";
-      }
-
-      addStep("gatekeeper", "thought", `Operator Consent confirmed. Authorization Token: PF-AUTH-${consentReq.id.toUpperCase()}`);
-      const consentEvidence = evidenceLedger.sealEvidence(
-        "gatekeeper",
-        `Human Consent authorized for action: ${consentReq.actionName}`,
-        "human_consent",
-        { requestId: consentReq.id, approvedBy: consentReq.approvedBy, decision: consentReq.status },
-        100
-      );
-      addStep("gatekeeper", "evidence_sealed", `Sealed Evidence Block #${consentEvidence.blockIndex} [SHA256: ${consentEvidence.hash.slice(0, 16)}...]`, undefined, consentEvidence.id);
+    // Nur der gatekeeper bekommt requestConsent (Separation of Duties).
+    if (agent.role === "gatekeeper") {
+      ctx.requestConsent = (spec: unknown) => {
+        const request = this.consentEngine.createRequest(
+          spec as OperationSpec,
+          "HIGH",
+          `Mission "${mission.title}": Operation erfordert menschliche Freigabe (operation-bound, kein Auto-Approve).`
+        );
+        mission.consentRequests.push(request);
+        this.addStep(
+          mission,
+          "gatekeeper",
+          "consent_gate",
+          `Human Consent Gate Triggered: Operation '${request.spec.actionName}' requires operator authorization.`,
+          { requestId: request.requestId }
+        );
+        this.emit("consent_requested", request);
+        return request.requestId;
+      };
     }
 
-    mission.status = "running";
-    await new Promise((r) => setTimeout(r, 700));
+    const output = await agent.run(ctx);
+    this.addStep(mission, role, "thought", output.summary, output.findings);
+    return output;
+  }
 
-    // 5. AUDITOR (TRUTH & CHAIN VERIFICATION)
+  private finalizeMission(
+    mission: Mission,
+    manifestHash: string,
+    missionRevision: number,
+    consentApproved: boolean
+  ) {
     mission.activeAgentId = "auditor";
-    addStep("auditor", "status_change", "Auditor activated. Recalculating SHA-256 Merkle chain and computing empirical truth score...");
 
-    const auditVerification = evidenceLedger.verifyChainIntegrity();
-    addStep("auditor", "thought", `Ledger Verification:\n• Chain Integrity: ${auditVerification.isValid ? "100% VALID" : "CORRUPTED"}\n• Verified Blocks: ${auditVerification.totalBlocks}\n• Cryptographic Consensus: CONFIRMED`);
-    
-    const auditorEvidence = evidenceLedger.sealEvidence(
+    // Reale Verifikation der Kette — keine Selbstzertifizierung durch Agenten.
+    const chainVerification = this.ledger.verifyChain();
+    const receiptVerification = this.receipts.verifyChain();
+
+    // Runner-Level-Abschlussblock mit dem ECHTEN Verifikationsergebnis.
+    const finalBlock = this.ledger.seal({
+      agentId: "auditor",
+      claim: FINALIZE_CLAIM,
+      payload: {
+        evidenceType: "system_trace",
+        missionId: mission.id,
+        missionRevision,
+        consentApproved,
+        chainVerification,
+        receiptVerification,
+      },
+      manifestHash,
+      missionRevision,
+    });
+    this.receipts.issueReceipt({
+      missionId: mission.id,
+      missionRevision,
+      manifestHash,
+      payloadHash: finalBlock.payloadHash,
+      createdBy: "auditor",
+    });
+    this.addStep(
+      mission,
       "auditor",
-      `Full Ledger Cryptographic Integrity Verified across ${auditVerification.totalBlocks} blocks`,
-      "audit_verdict",
-      { verificationResult: auditVerification, empiricalScore: 98.8 },
-      99
+      "evidence_sealed",
+      `Sealed Evidence Block #${finalBlock.blockIndex} [SHA256: ${finalBlock.blockHash.slice(0, 16)}...]`,
+      undefined,
+      finalBlock.blockHash
     );
-    addStep("auditor", "evidence_sealed", `Sealed Evidence Block #${auditorEvidence.blockIndex} [SHA256: ${auditorEvidence.hash.slice(0, 16)}...]`, undefined, auditorEvidence.id);
-    await new Promise((r) => setTimeout(r, 700));
 
-    // 6. OPERATOR (FINAL VERDICT & SEALS)
-    mission.activeAgentId = "operator";
-    addStep("operator", "status_change", "Operator finalizing mission payload and publishing verifiable audit verdict...");
+    // Judge-Urteil ueber die reale Evidence + Receipts (reine Funktion).
+    const judgeVerdict: VerdictRecord = Judge.judge(
+      FINALIZE_CLAIM,
+      this.ledger.getChain(),
+      this.receipts.exportReceipts()
+    );
 
-    const finalChain = evidenceLedger.getChain();
-    const lastBlock = finalChain[finalChain.length - 1];
+    const lastBlock = this.ledger.getChain().at(-1);
+    const recommendations: string[] = [];
+    if (!chainVerification.isValid) {
+      recommendations.push(`Evidence chain broken at block ${chainVerification.brokenAt} — investigate before any downstream use.`);
+    }
+    if (!receiptVerification.isValid) {
+      recommendations.push(`Receipt chain broken at receipt ${receiptVerification.brokenAt}.`);
+    }
+    if (judgeVerdict.verdict === "BLOCKED_BY_MISSING_EVIDENCE") {
+      recommendations.push("Judge reports missing evidence — mission outcome is not verifiable.");
+    }
+    if (judgeVerdict.verdict === "CONTRADICTED") {
+      recommendations.push("Judge reports contradictory evidence — manual review required.");
+    }
+    if (!consentApproved) {
+      recommendations.push("Mission was aborted by operator consent rejection.");
+    }
+    if (recommendations.length === 0) {
+      recommendations.push("Evidence chain and receipts verify cleanly; no anomalies detected.");
+    }
 
     mission.finalVerdict = {
-      summary: `ProofFleet successfully executed mission '${mission.title}'. All 8 agents operated under strict zero-trust contracts, generating ${finalChain.length} SHA-256 verifiable evidence blocks with full human-in-the-loop consent approval.`,
-      overallTruthScore: 98.4,
-      integrityVerified: auditVerification.isValid,
-      compliancePassed: true,
-      recommendations: [
-        "Cryptographic evidence chain verified with zero tampering.",
-        "Human consent record permanently anchored in Block #" + (finalChain.length - 2),
-        "Safe to promote to downstream production systems.",
-      ],
-      chainHashDigest: lastBlock.hash,
+      summary: consentApproved
+        ? `Mission '${mission.title}' abgeschlossen. Judge-Urteil ueber die reale Evidence: ${judgeVerdict.verdict}. ${judgeVerdict.rationale}`
+        : `Mission '${mission.title}' durch Operator-Entscheidung abgebrochen (Consent REJECTED). Judge-Urteil ueber die vorhandene Evidence: ${judgeVerdict.verdict}.`,
+      judgeVerdict,
+      integrityVerified: chainVerification.isValid && receiptVerification.isValid,
+      compliancePassed: chainVerification.isValid && receiptVerification.isValid,
+      recommendations,
+      chainHashDigest: lastBlock?.blockHash ?? "",
     };
 
-    mission.status = "completed";
+    mission.status = consentApproved ? "completed" : "failed";
     mission.finishedAt = new Date().toISOString();
-    mission.evidenceChain = finalChain;
+    mission.evidenceChain = this.ledger.getChain();
 
-    addStep("operator", "message", `Mission Complete: Integrity Verified. Final Chain Digest: ${lastBlock.hash}`);
+    this.addStep(
+      mission,
+      "operator",
+      "message",
+      `Mission ${mission.status}: judge verdict ${judgeVerdict.verdict}. Final Chain Digest: ${mission.finalVerdict.chainHashDigest}`
+    );
     this.emit("mission_completed", mission);
+  }
+
+  private addStep(
+    mission: Mission,
+    agentId: AgentRole,
+    type: ExecutionStep["type"],
+    content: string,
+    metadata?: Record<string, unknown>,
+    evidenceBlockId?: string
+  ) {
+    const step: ExecutionStep = {
+      stepId: `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      agentId,
+      timestamp: new Date().toISOString(),
+      type,
+      content,
+      metadata,
+      evidenceBlockId,
+    };
+    mission.steps.push(step);
+    this.emit("execution_step", step);
+    return step;
   }
 }
 
