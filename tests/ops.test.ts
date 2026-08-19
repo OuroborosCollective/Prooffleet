@@ -120,6 +120,45 @@ describe('OperationExecutor', () => {
     expect(calls.apply).toBe(0);
   });
 
+  it('concurrency: 50 parallel execute() with same operationId -> apply exactly 1x', async () => {
+    // Arrange — Handler mit künstlicher Verzögerung, damit die Aufrufe
+    // sich echt überlappen (sonst wäre der Cache-Treffer trivial).
+    const consent = new ConsentEngine();
+    const executor = new OperationExecutor({ grantValidator: consent, sleep: async () => {} });
+    const spec = makeSpec({ operationId: 'op-concurrent' });
+    const grant = approvedGrantFor(consent, spec);
+    let applied = false;
+    const calls = { apply: 0, readback: 0 };
+    const slow = () => new Promise<void>((resolve) => setTimeout(resolve, 5));
+    const handler: OperationHandler = {
+      async apply() {
+        await slow();
+        calls.apply += 1;
+        applied = true;
+        return { ok: true };
+      },
+      async readback() {
+        await slow();
+        calls.readback += 1;
+        return applied ? { applied: true } : null;
+      },
+    };
+
+    // Act — 50 parallele Ausführungen mit identischer operationId.
+    const results = await Promise.all(
+      Array.from({ length: 50 }, () => executor.execute(spec, handler, grant)),
+    );
+
+    // Assert — apply lief exakt einmal; alle Aufrufer erhalten dasselbe Result.
+    expect(calls.apply).toBe(1);
+    for (const r of results) {
+      expect(r).toEqual(results[0]);
+      expect(r.status).toBe('applied');
+    }
+    // Nach Abschluss liegt das Result in der Idempotency-Map.
+    expect(executor.getResult('op-concurrent')).toEqual(results[0]);
+  });
+
   it('read operations need no grant and return readback evidence', async () => {
     // Arrange
     const executor = new OperationExecutor({ sleep: async () => {} });

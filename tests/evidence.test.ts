@@ -88,6 +88,39 @@ describe('EvidenceLedger', () => {
     expect(result.brokenAt).toBe(1);
   });
 
+  it('getChain() returns deep copies: mutating a nested payload never touches the live ledger', () => {
+    // Arrange — Block mit verschachteltem Payload versiegeln.
+    const ledger = new EvidenceLedger();
+    const sealed = ledger.seal({
+      agentId: 'builder',
+      claim: 'c1',
+      payload: { nested: { value: 42 }, list: [1, 2, 3] },
+      manifestHash: MANIFEST,
+      missionRevision: 1,
+    });
+    expect(ledger.verifyChain().isValid).toBe(true);
+
+    // Act — verschachtelten Payload des exportierten Blocks mutieren.
+    const snapshot = ledger.getChain();
+    const exported = snapshot[0] as unknown as {
+      payload: { nested: { value: number }; list: number[] };
+    };
+    exported.payload.nested.value = 999;
+    exported.payload.list.push(4);
+    // Auch der Rueckgabewert von seal() darf keine Referenz aufs Ledger sein.
+    (sealed.payload as { nested: { value: number } }).nested.value = -1;
+
+    // Assert — Live-Ledger unveraendert, verifyChain weiterhin gueltig.
+    const live = ledger.getChain()[0] as unknown as {
+      payload: { nested: { value: number }; list: number[] };
+    };
+    expect(live.payload.nested.value).toBe(42);
+    expect(live.payload.list).toEqual([1, 2, 3]);
+    const result = ledger.verifyChain();
+    expect(result.isValid).toBe(true);
+    expect(result.brokenAt).toBeNull();
+  });
+
   it('accepts an untampered chain', () => {
     // Arrange
     const ledger = new EvidenceLedger();
