@@ -84,22 +84,24 @@ export const ConsentGateModal: React.FC<ConsentGateModalProps> = ({
 
     if (event.key !== "Tab") return;
 
-    const nodes = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? [],
-    ).filter((element) => !element.hasAttribute("disabled") && element.tabIndex !== -1);
+    const nodeList = dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+    const nodes: HTMLElement[] = nodeList ? Array.from(nodeList) : [];
+    const enabledNodes = nodes.filter(
+      (element) => !element.hasAttribute("disabled") && element.tabIndex !== -1,
+    );
 
-    if (nodes.length === 0) {
+    if (enabledNodes.length === 0) {
       event.preventDefault();
       dialogRef.current?.focus();
       return;
     }
 
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const currentIndex = active ? nodes.indexOf(active) : -1;
-    const nextIndex = nextDialogFocusIndex(currentIndex, nodes.length, event.shiftKey);
+    const currentIndex = active ? enabledNodes.indexOf(active) : -1;
+    const nextIndex = nextDialogFocusIndex(currentIndex, enabledNodes.length, event.shiftKey);
     if (nextIndex >= 0) {
       event.preventDefault();
-      nodes[nextIndex].focus();
+      enabledNodes[nextIndex].focus();
     }
   };
 
