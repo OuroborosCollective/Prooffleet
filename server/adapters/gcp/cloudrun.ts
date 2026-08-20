@@ -9,6 +9,49 @@ import {
   type GcpAdapterStatus,
 } from './types';
 
+interface CloudRunServiceSnapshot {
+  name?: string | null;
+  uri?: string | null;
+  reconciling?: boolean | null;
+  latestReadyRevision?: string | null;
+  latestCreatedRevision?: string | null;
+  observedGeneration?: string | number | null;
+}
+
+/**
+ * Pure metadata projection used by the live adapter and regression tests.
+ * The output contains only Cloud Run service identity/health metadata.
+ */
+export function projectCloudRunReadback(
+  requestedName: string,
+  svc: CloudRunServiceSnapshot,
+): GcpAdapterReadback {
+  const serviceName = svc.name ?? requestedName;
+  const latestReadyRevision = svc.latestReadyRevision ?? null;
+  const latestCreatedRevision = svc.latestCreatedRevision ?? null;
+  const reconciling = svc.reconciling ?? null;
+  const observedGeneration = svc.observedGeneration ?? null;
+  const uri = svc.uri ?? null;
+
+  return {
+    ok: true,
+    detail:
+      `echter Cloud Run services.get auf ${requestedName} erfolgreich ` +
+      `(latestReadyRevision=${latestReadyRevision ?? 'unbekannt'}, ` +
+      `latestCreatedRevision=${latestCreatedRevision ?? 'unbekannt'}, ` +
+      `reconciling=${String(reconciling)})`,
+    evidence: {
+      sourceKind: 'CLOUD_RUN_READBACK',
+      serviceName,
+      uri,
+      reconciling,
+      latestReadyRevision,
+      latestCreatedRevision,
+      observedGeneration,
+    },
+  };
+}
+
 export class CloudRunAdapter implements GcpAdapter {
   readonly service = 'cloudrun' as const;
   private lastReadbackAt?: string;
@@ -43,7 +86,7 @@ export class CloudRunAdapter implements GcpAdapter {
     }
     let ClientCtor: unknown;
     try {
-      const pkg = '@google-cloud/run'; // nicht-literal: optionale Dep, Aufloesung erst zur Laufzeit
+      const pkg = '@google-cloud/run'; // optionale Dep, Aufloesung erst zur Laufzeit
       ({ ServicesClient: ClientCtor } = (await import(pkg)) as Record<string, unknown>);
     } catch (err) {
       return noRealReadback(`Paket @google-cloud/run nicht installiert (${(err as Error).message})`);
@@ -51,17 +94,12 @@ export class CloudRunAdapter implements GcpAdapter {
     try {
       // Credentials ausschliesslich via ADC.
       const client = new (ClientCtor as new () => {
-        getService(req: {
-          name: string;
-        }): Promise<[{ name?: string | null; uri?: string | null; reconciling?: boolean | null }]>;
+        getService(req: { name: string }): Promise<[CloudRunServiceSnapshot]>;
       })();
       const name = `projects/${this.cfg.projectId as string}/locations/${this.cfg.region as string}/services/${this.cfg.serviceName as string}`;
       const [svc] = await client.getService({ name });
       this.lastReadbackAt = new Date().toISOString();
-      return {
-        ok: true,
-        detail: `echter Cloud Run services.get auf ${name} erfolgreich (uri=${svc.uri ?? 'unbekannt'}, reconciling=${String(svc.reconciling)})`,
-      };
+      return projectCloudRunReadback(name, svc);
     } catch (err) {
       return noRealReadback(`services.get fehlgeschlagen: ${(err as Error).message}`);
     }
