@@ -7,11 +7,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 const workflow = readFileSync(join(here, '../.github/workflows/gcp-deploy-candidate.yml'), 'utf8');
 const dockerfile = readFileSync(join(here, '../Dockerfile'), 'utf8');
 
+function workflowTriggerBlock(source: string): string {
+  const match = source.match(/^on:\n([\s\S]*?)^permissions:/m);
+  if (!match) throw new Error('workflow trigger block not found');
+  return match[1];
+}
+
 describe('GCP candidate deploy safety contract', () => {
   it('is manual-only and requires an exact source revision plus explicit confirmation', () => {
-    expect(workflow).toContain('workflow_dispatch:');
-    expect(workflow).not.toMatch(/\n\s+push:/);
-    expect(workflow).not.toMatch(/\n\s+pull_request:/);
+    const triggers = workflowTriggerBlock(workflow);
+    expect(triggers).toMatch(/^  workflow_dispatch:/m);
+    expect(triggers).not.toMatch(/^  push:/m);
+    expect(triggers).not.toMatch(/^  pull_request:/m);
     expect(workflow).toContain('expected_source_revision:');
     expect(workflow).toContain("EXPECTED_SOURCE_REVISION: ${{ inputs.expected_source_revision }}");
     expect(workflow).toContain('test "$EXPECTED_SOURCE_REVISION" != "$GITHUB_SHA"');
