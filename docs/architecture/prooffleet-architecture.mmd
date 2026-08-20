@@ -11,8 +11,8 @@ flowchart LR
     API[Express API + FleetRunner]
 
     subgraph AGENTS[8 Core Roles]
-      O[1 Orchestrator\nGemini 3.6 Flash]
-      S[2 Scout\nGemini 3.6 Flash\nUNGROUNDED unless real source tool]
+      O[1 Orchestrator\nGemini 3.7 Flash]
+      S[2 Scout\nGemini 3.7 Flash\nUNGROUNDED unless real source tool]
       B[3 Builder\ndeterministic-runtime]
       A[4 Analyst\ndeterministic-runtime]
       SE[5 Sentinel\ndeterministic-runtime]
@@ -48,7 +48,7 @@ flowchart LR
   API --> O
 
   subgraph GOOGLEAI[Google AI]
-    GENAI[Google GenAI SDK\ngemini-3.6-flash]
+    GENAI[Google GenAI SDK\ngemini-3.7-flash]
   end
   GENAI -->|AGENT_OUTPUT + model ID + output hash| O
   GENAI -->|context only; no fake citations| S
