@@ -407,21 +407,28 @@ export class FleetRunner {
       "TEST_READBACK",
     ];
 
-    // Disabling consent must never disable evidence. Until a mission is
-    // explicitly classified as read-only with its own completion contract,
-    // every continuing mission needs authoritative operation readback.
-    const proofRequirements: ProofRequirement[] = consentApproved
-      ? [
-          {
-            requirementId: "external_effect_readback",
-            evidenceType: "operation_result",
-            allowedSourceKinds: authoritativeEffectSources,
-            runtimeRequired: true,
-            operationId: pendingOperation?.operationId,
-            minCount: 1,
-          },
-        ]
-      : [];
+    const proofRequirements: ProofRequirement[] = !consentApproved
+      ? []
+      : pendingOperation
+        ? [
+            {
+              requirementId: "external_effect_readback",
+              evidenceType: "operation_result",
+              allowedSourceKinds: authoritativeEffectSources,
+              runtimeRequired: true,
+              operationId: pendingOperation.operationId,
+              minCount: 1,
+            },
+          ]
+        : [
+            {
+              requirementId: "operation_spec_required",
+              evidenceType: "operation_spec",
+              allowedSourceKinds: ["SYSTEM_TRACE"],
+              runtimeRequired: false,
+              minCount: 1,
+            },
+          ];
 
     const judgeVerdict: VerdictRecord = Judge.judge(
       FINALIZE_CLAIM,
