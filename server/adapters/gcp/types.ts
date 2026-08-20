@@ -18,9 +18,15 @@ export interface GcpAdapterStatus {
   lastReadbackAt?: string;
 }
 
+/**
+ * Structured, non-secret evidence returned only after a real provider call.
+ * `evidence` is deliberately metadata-only: no credentials, raw prompt bodies,
+ * secret values, or arbitrary database documents belong here.
+ */
 export interface GcpAdapterReadback {
   ok: boolean;
   detail: string;
+  evidence?: Record<string, unknown>;
 }
 
 export interface GcpAdapter {
