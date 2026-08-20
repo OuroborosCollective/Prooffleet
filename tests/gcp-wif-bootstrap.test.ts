@@ -35,15 +35,30 @@ describe('GCP WIF bootstrap safety contract', () => {
     expect(source).not.toContain('roles/run.admin');
   });
 
-  it('does not silently choose or create a Firestore database location', () => {
+  it('accepts either project ID or numeric project number and resolves canonical identity through gcloud', () => {
+    expect(source).toContain('--project-id)');
+    expect(source).toContain('--project-number)');
+    expect(source).toContain('PROJECT_NUMBER_INPUT');
+    expect(source).toContain('PROJECT_LOOKUP="${PROJECT_ID:-$PROJECT_NUMBER_INPUT}"');
+    expect(source).toContain("--format='value(projectId)'");
+    expect(source).toContain("--format='value(projectNumber)'");
+    expect(source).toContain('Supplied project number does not match Google Cloud readback');
+  });
+
+  it('does not silently choose or create a Firestore database location and logs the provider location readback', () => {
     expect(source).toContain("gcloud firestore databases describe --database='(default)'");
     expect(source).not.toMatch(/gcloud\s+firestore\s+databases\s+create/i);
+    expect(source).toContain("--format='value(locationId)'");
+    expect(source).toContain('Firestore default database exists: location=$FIRESTORE_LOCATION');
     expect(source).toContain('Create it explicitly in the intended location before live proof.');
   });
 
-  it('requires real project, region and Cloud Run service identities', () => {
-    expect(source).toContain('--project-id, --region and --cloud-run-service are required.');
+  it('requires real project identity, region and Cloud Run service without hardcoding the owner console values', () => {
+    expect(source).toContain('One of --project-id or --project-number is required.');
+    expect(source).toContain('--region and --cloud-run-service are required.');
     expect(source).not.toContain('REGION="europe-west1"');
+    expect(source).not.toContain('PROJECT_NUMBER_INPUT="511695074775"');
+    expect(source).not.toContain('CLOUD_RUN_SERVICE="prooffleet"');
   });
 
   it('emits all six repository variables required by the live-proof workflow', () => {
