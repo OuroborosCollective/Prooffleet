@@ -10,7 +10,7 @@ import type { OperatorExecutionResult, OperatorExecutor } from '../agents/operat
 
 const EFFECT_SCHEMA = 'prooffleet.firestore-effect.v1';
 
-export interface FirestoreEffectIdentity {
+export interface FirestoreEffectIdentity extends Record<string, unknown> {
   schemaVersion: typeof EFFECT_SCHEMA;
   operationId: string;
   missionId: string;
