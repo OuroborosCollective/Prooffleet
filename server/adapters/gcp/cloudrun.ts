@@ -9,6 +9,15 @@ import {
   type GcpAdapterStatus,
 } from './types';
 
+interface CloudRunEnvVarSnapshot {
+  name?: string | null;
+  value?: string | null;
+}
+
+interface CloudRunContainerSnapshot {
+  env?: CloudRunEnvVarSnapshot[] | null;
+}
+
 interface CloudRunServiceSnapshot {
   name?: string | null;
   uri?: string | null;
@@ -16,15 +25,31 @@ interface CloudRunServiceSnapshot {
   latestReadyRevision?: string | null;
   latestCreatedRevision?: string | null;
   observedGeneration?: string | number | null;
+  template?: {
+    containers?: CloudRunContainerSnapshot[] | null;
+  } | null;
+}
+
+function findDeclaredSourceRevision(svc: CloudRunServiceSnapshot): string | null {
+  for (const container of svc.template?.containers ?? []) {
+    for (const env of container.env ?? []) {
+      if (env.name === 'PROOFFLEET_SOURCE_REVISION') {
+        return typeof env.value === 'string' && env.value.length > 0 ? env.value : null;
+      }
+    }
+  }
+  return null;
 }
 
 /**
  * Pure metadata projection used by the live adapter and regression tests.
- * The output contains only Cloud Run service identity/health metadata.
+ * The output contains only Cloud Run service identity/health metadata plus
+ * ProofFleet's explicit non-secret source-revision declaration.
  */
 export function projectCloudRunReadback(
   requestedName: string,
   svc: CloudRunServiceSnapshot,
+  expectedSourceRevision?: string | null,
 ): GcpAdapterReadback {
   const serviceName = svc.name ?? requestedName;
   const latestReadyRevision = svc.latestReadyRevision ?? null;
@@ -32,13 +57,18 @@ export function projectCloudRunReadback(
   const reconciling = svc.reconciling ?? null;
   const observedGeneration = svc.observedGeneration ?? null;
   const uri = svc.uri ?? null;
+  const declaredSourceRevision = findDeclaredSourceRevision(svc);
+  const sourceRevisionMatchesExpected = expectedSourceRevision
+    ? declaredSourceRevision === expectedSourceRevision
+    : null;
 
   return {
     ok: true,
     detail:
       `echter Cloud Run services.get auf ${requestedName} erfolgreich ` +
       `(latestReadyRevision=${latestReadyRevision ?? 'unbekannt'}, ` +
-      `latestCreatedRevision=${latestCreatedRevision ?? 'unbekannt'}, ` +
+      `declaredSourceRevision=${declaredSourceRevision ?? 'nicht gesetzt'}, ` +
+      `sourceRevisionMatchesExpected=${String(sourceRevisionMatchesExpected)}, ` +
       `reconciling=${String(reconciling)})`,
     evidence: {
       sourceKind: 'CLOUD_RUN_READBACK',
@@ -48,6 +78,8 @@ export function projectCloudRunReadback(
       latestReadyRevision,
       latestCreatedRevision,
       observedGeneration,
+      declaredSourceRevision,
+      sourceRevisionMatchesExpected,
     },
   };
 }
@@ -99,7 +131,9 @@ export class CloudRunAdapter implements GcpAdapter {
       const name = `projects/${this.cfg.projectId as string}/locations/${this.cfg.region as string}/services/${this.cfg.serviceName as string}`;
       const [svc] = await client.getService({ name });
       this.lastReadbackAt = new Date().toISOString();
-      return projectCloudRunReadback(name, svc);
+      const expectedSourceRevision =
+        typeof this.cfg.sourceRevision === 'string' ? this.cfg.sourceRevision : null;
+      return projectCloudRunReadback(name, svc, expectedSourceRevision);
     } catch (err) {
       return noRealReadback(`services.get fehlgeschlagen: ${(err as Error).message}`);
     }
