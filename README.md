@@ -29,8 +29,11 @@ flowchart LR
     U[Human Operator] --> UI[React / TypeScript UI]
     UI --> API[Express Runtime]
 
-    API --> O[Orchestrator]
-    O --> S[Scout]
+    GM[Google GenAI SDK\ngemini-3.6-flash] --> O[Orchestrator]
+    GM --> S[Scout]
+
+    API --> O
+    O --> S
     S --> B[Builder]
     B --> A[Analyst]
     A --> SE[Sentinel]
@@ -56,6 +59,7 @@ flowchart LR
 Important boundaries:
 
 - **Actor != Verifier != Judge**
+- Gemini output is agent context/output, not authoritative external-world proof
 - memory/context is advisory and cannot satisfy runtime proof
 - SHA-256 proves byte/integrity relationships, not external-world truth
 - write/execute operations require an operation-bound consent grant
@@ -168,7 +172,23 @@ Never commit `.env`, Workload Identity credential artifacts or live-proof receip
 GEMINI_API_KEY
 ```
 
-The codebase uses Google's GenAI SDK (`@google/genai`). The exact model used for the final hackathon submission must be validated against the live Google API/deployment and recorded truthfully in the final Devpost entry.
+The canonical ProofFleet LLM contract is:
+
+```text
+provider: google-genai (@google/genai)
+model:    gemini-3.6-flash
+```
+
+Only the **Orchestrator** and **Scout** receive the Gemini provider in the real fleet runtime. The other six core roles are declared as `deterministic-runtime` because they do not make Gemini calls.
+
+Gemini output is deliberately not treated as authoritative runtime truth:
+
+- Orchestrator planning text is emitted as `AGENT_OUTPUT` together with provider, model ID and SHA-256 output hash.
+- Scout Gemini-only context is explicitly marked **ungrounded** and cannot manufacture citations. `grounded=true` is reserved for a real grounding-tool result.
+- A configured Gemini provider failure propagates as a real failure; it is not silently converted into an alleged LLM success.
+- With no API key, the supported deterministic fallback is clearly labeled as such.
+
+The model/runtime contract above is code- and CI-verified. A final hackathon claim that Gemini was exercised in the deployed demo must still be backed by a real provider-side run with valid credentials; local contract tests alone are not provider evidence.
 
 ## Operator authentication
 
