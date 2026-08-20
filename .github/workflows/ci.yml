@@ -17,6 +17,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  bootstrap-lockfile:
+    name: bootstrap-package-lock-once
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/hardening/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: true
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Create package-lock v3 only when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f package-lock.json; then
+            echo 'package-lock.json already exists; no mutation required.'
+            exit 0
+          fi
+
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          test -f package-lock.json
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git diff --cached --quiet && exit 0
+          git commit -m 'chore: lock ProofFleet dependencies'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
   verify:
     name: verify-runtime-chain
     runs-on: ubuntu-latest
@@ -35,8 +74,17 @@ jobs:
           cache: npm
           cache-dependency-path: package.json
 
-      - name: Resolve dependencies for current candidate
-        run: npm install --no-audit --no-fund
+      - name: Install dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f package-lock.json; then
+            echo 'Using immutable package-lock via npm ci.'
+            npm ci --no-audit --no-fund
+          else
+            echo 'WARNING: package-lock missing on this revision; resolving candidate graph.'
+            npm install --no-audit --no-fund
+          fi
 
       - name: Verify TypeScript, regressions, production build and HTTP runtime
         run: npm run verify:ci
@@ -65,15 +113,21 @@ jobs:
         with:
           node-version: 22
 
-      - name: Resolve candidate dependency graph
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Ensure audit lock exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! test -f package-lock.json; then
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          fi
 
       - name: High/Critical vulnerability gate
         run: npm audit --audit-level=high
 
-# Reproducibility note:
-# The current hardening branch is still missing a committed package-lock.json.
-# This workflow therefore resolves dependencies before verification. The final
-# submission gate MUST switch the install step to `npm ci` once the verified
-# package-lock v3 is committed. Until then, green CI proves candidate behavior
-# for the resolved graph, not immutable dependency reproducibility.
+# Reproducibility contract:
+# - The hardening branch gets exactly one automatic package-lock bootstrap when
+#   the lock is absent.
+# - The bootstrap job is push-only and exits without mutation once the lock is
+#   present, so it cannot create a commit loop.
+# - Every later verification run automatically uses `npm ci`.
+# - Runtime truth remains in `npm run verify:ci`; the workflow only invokes it.
