@@ -6,10 +6,34 @@
  * niemals ein behaupteter Erfolg.
  */
 
+import type {
+  EvidenceAssertion,
+  EvidenceSourceKind,
+} from '../../src/types/index';
 import { AgentContext, AgentOutput, FleetAgent } from './base';
 
+export interface OperatorExecutionResult {
+  status: string;
+  detail?: string;
+  readbackEvidence?: unknown;
+  sourceKind?: EvidenceSourceKind;
+  sourceRevision?: string;
+  deploymentRevision?: string;
+}
+
 export interface OperatorExecutor {
-  execute(spec: unknown): Promise<{ status: string; detail?: string }>;
+  execute(spec: unknown): Promise<OperatorExecutionResult>;
+}
+
+function assertionFor(result: OperatorExecutionResult): EvidenceAssertion {
+  if (result.status === 'failed') return 'CONTRADICTED';
+  if (
+    (result.status === 'applied' || result.status === 'already_applied') &&
+    result.readbackEvidence !== undefined
+  ) {
+    return 'OBSERVED';
+  }
+  return 'UNAVAILABLE';
 }
 
 export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
@@ -17,13 +41,19 @@ export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
     role: 'operator',
     permissions: ['read', 'write', 'execute'],
     async run(ctx: AgentContext): Promise<AgentOutput> {
-      // Consent-Status kommt aus dem Context (vom Gatekeeper/ConsentEngine-Flow).
       const consent = ctx.memory.get('approvedConsent');
       const spec = ctx.memory.get('pendingOperationSpec');
+      const operationId =
+        spec && typeof spec === 'object'
+          ? (spec as { operationId?: string }).operationId ?? null
+          : null;
 
       if (!spec || typeof spec !== 'object') {
         const evidenceId = ctx.emitEvidence('no operation to execute', 'operation_status', {
           status: 'not_executed',
+          assertion: 'UNAVAILABLE',
+          sourceKind: 'AGENT_OUTPUT',
+          operationId,
           reason: 'no operation spec provided in context',
         });
         return {
@@ -37,7 +67,9 @@ export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
       if (!consent) {
         const evidenceId = ctx.emitEvidence('operation blocked: consent required', 'operation_status', {
           status: 'blocked_consent_required',
-          operationId: (spec as { operationId?: string }).operationId ?? null,
+          assertion: 'UNAVAILABLE',
+          sourceKind: 'AGENT_OUTPUT',
+          operationId,
         });
         return {
           role: agent.role,
@@ -50,6 +82,9 @@ export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
       if (!executor) {
         const evidenceId = ctx.emitEvidence('operation not executed', 'operation_status', {
           status: 'not_executed',
+          assertion: 'UNAVAILABLE',
+          sourceKind: 'AGENT_OUTPUT',
+          operationId,
           reason: 'no operation executor configured',
         });
         return {
@@ -60,17 +95,29 @@ export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
         };
       }
 
-      // Echte Ausfuehrung ueber den injizierten Executor (mit Idempotency/Readback-Semantik des OPS-Moduls).
       const result = await executor.execute(spec);
+      const assertion = assertionFor(result);
+      const sourceKind = result.sourceKind ?? 'AGENT_OUTPUT';
       const evidenceId = ctx.emitEvidence('operation executed via executor', 'operation_result', {
         status: result.status,
         detail: result.detail ?? null,
+        assertion,
+        sourceKind,
+        operationId,
+        readbackEvidence: result.readbackEvidence ?? null,
+        sourceRevision: result.sourceRevision ?? null,
+        deploymentRevision: result.deploymentRevision ?? null,
       });
       return {
         role: agent.role,
-        summary: `Operation ausgefuehrt: status=${result.status}.`,
+        summary: `Operation ausgefuehrt: status=${result.status}, assertion=${assertion}, source=${sourceKind}.`,
         evidenceIds: [evidenceId],
-        findings: { status: result.status, detail: result.detail ?? null },
+        findings: {
+          status: result.status,
+          assertion,
+          sourceKind,
+          detail: result.detail ?? null,
+        },
       };
     },
   };
