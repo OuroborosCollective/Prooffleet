@@ -156,7 +156,7 @@ async function startServer() {
 
   app.post("/api/operator/session", (req, res) => {
     const result = operatorSessions.createSession(req.body?.token);
-    if (!result.ok) {
+    if (result.ok === false) {
       return res.status(result.status).json({ error: result.reason });
     }
     res.setHeader("Set-Cookie", result.setCookie);
