@@ -20,6 +20,12 @@ describe('GCP WIF bootstrap safety contract', () => {
     expect(source).not.toMatch(/GOOGLE_APPLICATION_CREDENTIALS=.*\.json/i);
   });
 
+  it('uses a dedicated GitHub WIF service account instead of the project default compute identity', () => {
+    expect(source).toContain('SERVICE_ACCOUNT_ID="prooffleet-github"');
+    expect(source).toContain('SA_EMAIL="${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com"');
+    expect(source).not.toContain('compute@developer.gserviceaccount.com');
+  });
+
   it('restricts GitHub OIDC admission to the exact ProofFleet repository', () => {
     expect(source).toContain('GITHUB_REPO="OuroborosCollective/Prooffleet"');
     expect(source).toContain("EXPECTED_CONDITION=\"assertion.repository == '${GITHUB_REPO}'\"");
