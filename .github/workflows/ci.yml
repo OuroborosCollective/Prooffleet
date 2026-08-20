@@ -1,0 +1,79 @@
+name: ProofFleet CI
+
+on:
+  push:
+    branches:
+      - main
+      - hardening/**
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prooffleet-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify-runtime-chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package.json
+
+      - name: Resolve dependencies for current candidate
+        run: npm install --no-audit --no-fund
+
+      - name: Verify TypeScript, regressions, production build and HTTP runtime
+        run: npm run verify:ci
+
+      - name: Record exact tested revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "tested_sha=${GITHUB_SHA}"
+          git rev-parse HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+  dependency-audit:
+    name: dependency-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve candidate dependency graph
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: High/Critical vulnerability gate
+        run: npm audit --audit-level=high
+
+# Reproducibility note:
+# The current hardening branch is still missing a committed package-lock.json.
+# This workflow therefore resolves dependencies before verification. The final
+# submission gate MUST switch the install step to `npm ci` once the verified
+# package-lock v3 is committed. Until then, green CI proves candidate behavior
+# for the resolved graph, not immutable dependency reproducibility.
