@@ -11,7 +11,7 @@ describe('OperatorSessionManager', () => {
     const result = manager.createSession('anything');
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.status).toBe(503);
+    if (result.ok === false) expect(result.status).toBe(503);
     expect(manager.authenticate(undefined).authenticated).toBe(false);
   });
 
@@ -23,7 +23,7 @@ describe('OperatorSessionManager', () => {
 
     const result = manager.createSession('wrong-token');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.status).toBe(401);
+    if (result.ok === false) expect(result.status).toBe(401);
   });
 
   it('issues a short-lived HttpOnly session and derives identity server-side', () => {
@@ -40,7 +40,7 @@ describe('OperatorSessionManager', () => {
 
     const result = manager.createSession('correct-token');
     expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected authenticated session');
+    if (result.ok === false) throw new Error('expected authenticated session');
     expect(result.identity).toBe('owner');
     expect(result.setCookie).toContain(`${OPERATOR_SESSION_COOKIE}=`);
     expect(result.setCookie).toContain('HttpOnly');
@@ -64,7 +64,7 @@ describe('OperatorSessionManager', () => {
       PROOFFLEET_SESSION_SECRET: 'session-secret',
     });
     const result = manager.createSession('correct-token');
-    if (!result.ok) throw new Error('expected authenticated session');
+    if (result.ok === false) throw new Error('expected authenticated session');
     const cookie = result.setCookie.split(';')[0];
     const [name, value] = cookie.split('=', 2);
     const tampered = `${name}=${value.slice(0, -1)}x`;
