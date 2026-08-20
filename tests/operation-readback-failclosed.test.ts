@@ -50,6 +50,7 @@ describe('OperationExecutor fail-closed readback semantics', () => {
     expect(applyCalls).toBe(0);
     expect(readbackCalls).toBe(3);
     expect(result.error).toContain('readback failed');
+    expect(executor.getResult(spec.operationId)).toBeUndefined();
   });
 
   it('never overwrites an existing operationId with conflicting identity', async () => {
@@ -77,6 +78,7 @@ describe('OperationExecutor fail-closed readback semantics', () => {
     expect(result.status).toBe('failed');
     expect(result.error).toContain('readback conflict');
     expect(applyCalls).toBe(0);
+    expect(executor.getResult(spec.operationId)).toBeUndefined();
   });
 
   it('fails immediately when post-apply readback reports an identity conflict', async () => {
@@ -103,5 +105,67 @@ describe('OperationExecutor fail-closed readback semantics', () => {
     expect(result.error).toContain('post-apply readback conflict');
     expect(applyCalls).toBe(1);
     expect(readbackCalls).toBe(2);
+    expect(executor.getResult(spec.operationId)).toBeUndefined();
+  });
+
+  it('allows the same operationId after consent is granted later', async () => {
+    const consent = new ConsentEngine();
+    const executor = new OperationExecutor({ grantValidator: consent, sleep: async () => {} });
+    const spec = makeSpec('op-consent-recovery');
+    let applied = false;
+    let applyCalls = 0;
+    const handler: OperationHandler = {
+      async apply() {
+        applyCalls += 1;
+        applied = true;
+      },
+      async readback() {
+        return applied ? { applied: true, sourceKind: 'FIRESTORE_READBACK' } : null;
+      },
+    };
+
+    const blocked = await executor.execute(spec, handler);
+    expect(blocked.status).toBe('blocked_consent_required');
+    expect(applyCalls).toBe(0);
+    expect(executor.getResult(spec.operationId)).toBeUndefined();
+
+    const grant = approvedGrant(consent, spec);
+    const recovered = await executor.execute(spec, handler, grant);
+
+    expect(recovered.status).toBe('applied');
+    expect(applyCalls).toBe(1);
+    expect(executor.getResult(spec.operationId)?.status).toBe('applied');
+  });
+
+  it('allows the same operationId after a transient readback outage recovers', async () => {
+    const consent = new ConsentEngine();
+    const executor = new OperationExecutor({ grantValidator: consent, maxAttempts: 2, sleep: async () => {} });
+    const spec = makeSpec('op-provider-recovery');
+    const grant = approvedGrant(consent, spec);
+    let providerAvailable = false;
+    let applied = false;
+    let applyCalls = 0;
+    const handler: OperationHandler = {
+      async apply() {
+        applyCalls += 1;
+        applied = true;
+      },
+      async readback() {
+        if (!providerAvailable) throw new Error('provider unavailable');
+        return applied ? { applied: true, sourceKind: 'FIRESTORE_READBACK' } : null;
+      },
+    };
+
+    const first = await executor.execute(spec, handler, grant);
+    expect(first.status).toBe('failed');
+    expect(applyCalls).toBe(0);
+    expect(executor.getResult(spec.operationId)).toBeUndefined();
+
+    providerAvailable = true;
+    const second = await executor.execute(spec, handler, grant);
+
+    expect(second.status).toBe('applied');
+    expect(applyCalls).toBe(1);
+    expect(executor.getResult(spec.operationId)?.status).toBe('applied');
   });
 });
