@@ -51,11 +51,11 @@ function fakeGemini(output = 'bounded model response'): LlmProvider {
 }
 
 describe('Gemini and manifest truth contract', () => {
-  it('uses the supported canonical Gemini model and contains no stale 3.7 runtime/manifest literal', () => {
+  it('uses the official GA Gemini 3.7 Flash model and contains no stale 3.6 runtime/manifest literal', () => {
     expect(PROOFFLEET_GEMINI_PROVIDER).toBe('google-genai');
-    expect(PROOFFLEET_GEMINI_MODEL).toBe('gemini-3.6-flash');
-    expect(fleetRunnerSource).not.toContain('gemini-3.7');
-    expect(contractsSource).not.toContain('gemini-3.7');
+    expect(PROOFFLEET_GEMINI_MODEL).toBe('gemini-3.7-flash');
+    expect(fleetRunnerSource).not.toContain('gemini-3.6');
+    expect(contractsSource).not.toContain('gemini-3.6');
     expect(fleetRunnerSource).toContain('model: PROOFFLEET_GEMINI_MODEL');
   });
 
