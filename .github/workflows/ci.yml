@@ -59,7 +59,7 @@ jobs:
   verify:
     name: verify-runtime-chain
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout exact revision
@@ -88,6 +88,35 @@ jobs:
 
       - name: Verify TypeScript, regressions, production build and HTTP runtime
         run: npm run verify:ci
+
+      - name: Build and smoke exact Cloud Run container image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="prooffleet-ci:${GITHUB_SHA}"
+          NAME="prooffleet-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker build --tag "$IMAGE" .
+          docker run --detach --name "$NAME" --env PORT=8080 --publish 127.0.0.1:3188:8080 "$IMAGE" >/dev/null
+          cleanup() {
+            docker logs "$NAME" || true
+            docker rm --force "$NAME" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          ready=false
+          for _ in $(seq 1 40); do
+            if curl --fail --silent --show-error http://127.0.0.1:3188/api/health >/tmp/prooffleet-container-health.json; then
+              ready=true
+              break
+            fi
+            sleep 0.25
+          done
+          if test "$ready" != true; then
+            echo 'Cloud Run container never became healthy on PORT=8080.' >&2
+            exit 1
+          fi
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/prooffleet-container-health.json','utf8'));if(!j||typeof j!=='object')process.exit(2);console.log('[container-smoke] health readback received')"
+          echo '[container-smoke] exact Docker image passed HTTP runtime smoke on PORT=8080'
 
       - name: Record source and tested revision identities
         shell: bash
@@ -139,7 +168,8 @@ jobs:
 # - The bootstrap job is push-only and exits without mutation once the lock is
 #   present, so it cannot create a commit loop.
 # - Every later verification run automatically uses `npm ci`.
-# - Runtime truth remains in `npm run verify:ci`; the workflow only invokes it.
+# - Runtime truth lives in `npm run verify:ci` plus an exact Docker-image HTTP
+#   smoke on the Cloud Run PORT contract; workflow YAML alone is not evidence.
 # - Pull-request verification deliberately tests GitHub's checked-out merge
 #   candidate while recording the PR source head separately. Neither identity
 #   may be labeled as the other.
