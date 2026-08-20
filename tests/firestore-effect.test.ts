@@ -5,6 +5,7 @@ import { canonicalJson, sha256Hex } from '../server/evidence';
 import {
   FirestoreEffectHandler,
   FirestoreOperatorExecutor,
+  createFirestoreOperatorExecutor,
   type FirestoreEffectIdentity,
   type FirestoreEffectSnapshot,
   type FirestoreEffectStore,
@@ -138,5 +139,15 @@ describe('Firestore proof effect', () => {
     expect(result.status).toBe('failed');
     expect(result.detail).toContain('readback conflict');
     expect(store.setCalls).toBe(1);
+  });
+
+  it('keeps the real effect executor unavailable when exact source revision is missing', async () => {
+    const executor = await createFirestoreOperatorExecutor({
+      GCP_PROJECT_ID: 'project-test',
+      PROOFFLEET_FIRESTORE_COLLECTION: 'proof-effects',
+      PROOFFLEET_SOURCE_REVISION: '',
+    });
+
+    expect(executor).toBeUndefined();
   });
 });
