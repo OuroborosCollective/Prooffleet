@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   bootstrap-lockfile:
-    name: bootstrap-package-lock-once
+    name: reconcile-package-lock
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/hardening/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -37,23 +37,29 @@ jobs:
         with:
           node-version: 22
 
-      - name: Create package-lock v3 only when missing
+      - name: Reconcile package-lock from package.json without running dependency scripts
         shell: bash
         run: |
           set -euo pipefail
-          if test -f package-lock.json; then
-            echo 'package-lock.json already exists; no mutation required.'
-            exit 0
-          fi
 
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
           test -f package-lock.json
+
+          if git diff --quiet -- package-lock.json; then
+            echo 'package-lock.json already matches package.json; no mutation required.'
+            exit 0
+          fi
+
+          if ! git diff --quiet -- package.json; then
+            echo 'Refusing lock reconciliation because package.json changed inside the lock job.' >&2
+            exit 2
+          fi
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add package-lock.json
           git diff --cached --quiet && exit 0
-          git commit -m 'chore: lock ProofFleet dependencies'
+          git commit -m 'chore: reconcile ProofFleet dependency lock'
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
   verify:
@@ -163,11 +169,11 @@ jobs:
         run: npm audit --audit-level=high
 
 # Reproducibility contract:
-# - The hardening branch gets exactly one automatic package-lock bootstrap when
-#   the lock is absent.
-# - The bootstrap job is push-only and exits without mutation once the lock is
-#   present, so it cannot create a commit loop.
-# - Every later verification run automatically uses `npm ci`.
+# - Every push to a hardening branch recomputes package-lock.json from package.json
+#   with dependency scripts disabled and commits only the lock if it actually differs.
+# - The reconciliation job is push-only, never changes package.json, and produces
+#   no commit when the lock already matches, so it cannot create a commit loop.
+# - Every verification run with a committed lock uses `npm ci`.
 # - Runtime truth lives in `npm run verify:ci` plus an exact Docker-image HTTP
 #   smoke on the Cloud Run PORT contract; workflow YAML alone is not evidence.
 # - Pull-request verification deliberately tests GitHub's checked-out merge
