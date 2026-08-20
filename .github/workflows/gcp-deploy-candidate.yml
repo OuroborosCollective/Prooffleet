@@ -50,6 +50,7 @@ jobs:
       PROOFFLEET_ARTIFACT_REPOSITORY: prooffleet
       EXPECTED_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.expected_source_revision }}
       DEPLOY_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
+      EVENT_ACTION: ${{ github.event.action }}
       EVENT_ACTOR: ${{ github.actor }}
       PR_LABEL_NAME: ${{ github.event.label.name }}
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -104,8 +105,8 @@ jobs:
               exit 2
             fi
           elif test "$GITHUB_EVENT_NAME" = 'pull_request'; then
-            if test "$GITHUB_EVENT_ACTION" != 'labeled'; then
-              echo "Candidate deploy only accepts pull_request:labeled, got action=$GITHUB_EVENT_ACTION" >&2
+            if test "${EVENT_ACTION:-}" != 'labeled'; then
+              echo "Candidate deploy only accepts pull_request:labeled, got action=${EVENT_ACTION:-<missing>}" >&2
               exit 2
             fi
             if test "$PR_LABEL_NAME" != 'proofleet-deploy-candidate'; then
