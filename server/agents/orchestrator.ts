@@ -11,6 +11,7 @@ import {
   generateHonest,
   requirePermission,
 } from './base';
+import { sha256Hex } from '../evidence/canonicalJson';
 
 export function createOrchestratorAgent(llm?: LlmProvider): FleetAgent {
   const agent: FleetAgent = {
@@ -32,18 +33,23 @@ export function createOrchestratorAgent(llm?: LlmProvider): FleetAgent {
         { phase: 'operator', purpose: 'freigegebene Operationen ausfuehren' },
       ];
 
-      const { text, source } = await generateHonest(
+      const generated = await generateHonest(
         llm,
         `Plane eine Mission fuer: ${ctx.inputGoal}`,
         `Deterministischer Missionsplan mit ${plan.length} Phasen fuer Ziel: "${ctx.inputGoal}".`,
       );
+      const narrativeSha256 = sha256Hex(generated.text);
 
       const evidenceId = ctx.emitEvidence('mission plan created', 'mission_plan', {
         missionId: ctx.missionId,
         missionRevision: ctx.missionRevision,
         inputGoal: ctx.inputGoal,
         phases: plan.map((p) => p.phase),
-        narrativeSource: source,
+        narrativeSource: generated.source,
+        llmProvider: generated.source === 'llm' ? generated.providerName : null,
+        llmModel: generated.source === 'llm' ? generated.modelId : null,
+        narrativeSha256,
+        evidenceSourceKind: 'AGENT_OUTPUT',
       });
 
       ctx.memory.set('plan', plan);
@@ -51,9 +57,15 @@ export function createOrchestratorAgent(llm?: LlmProvider): FleetAgent {
 
       return {
         role: agent.role,
-        summary: text,
+        summary: generated.text,
         evidenceIds: [evidenceId],
-        findings: { phases: plan, narrativeSource: source },
+        findings: {
+          phases: plan,
+          narrativeSource: generated.source,
+          llmProvider: generated.providerName,
+          llmModel: generated.modelId,
+          narrativeSha256,
+        },
       };
     },
   };
