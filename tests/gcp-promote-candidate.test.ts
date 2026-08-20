@@ -60,14 +60,44 @@ describe('GCP candidate promotion safety contract', () => {
     expect(workflow).toContain("/^sha256:[0-9a-f]{64}$/.test(digest)");
   });
 
-  it('re-smokes the exact tagged candidate before any traffic mutation', () => {
-    const smokeIndex = workflow.indexOf('Re-smoke exact tagged candidate immediately before traffic mutation');
+  it('re-smokes the exact tagged candidate and requires observed ADK proof before any traffic mutation', () => {
+    const smokeIndex = workflow.indexOf('Re-smoke exact tagged candidate and require observed ADK canary before traffic mutation');
+    const canaryIndex = workflow.indexOf('"$CANDIDATE_URL/api/runtime/adk-canary"');
     const updateIndex = workflow.indexOf('gcloud run services update-traffic "$PROOFFLEET_CLOUDRUN_SERVICE"');
     expect(smokeIndex).toBeGreaterThan(-1);
-    expect(updateIndex).toBeGreaterThan(smokeIndex);
+    expect(canaryIndex).toBeGreaterThan(smokeIndex);
+    expect(updateIndex).toBeGreaterThan(canaryIndex);
     expect(workflow).toContain('"$CANDIDATE_URL/api/health"');
     expect(workflow).toContain('Refusing promotion because tagged candidate did not pass /api/health.');
-    expect(workflow).toContain('[promotion-preflight] tagged candidate HTTP health observed');
+    expect(workflow).toContain("canary.status !== 'OBSERVED'");
+    expect(workflow).toContain('refusing promotion without observed ADK canary:');
+    expect(workflow).toContain('[promotion-preflight] tagged candidate health and exact source-bound ADK canary observed');
+  });
+
+  it('requires an exact source-bound Google ADK Gemini receipt with matching challenge and response hashes', () => {
+    expect(workflow).toContain('canary.eligible !== true');
+    expect(workflow).toContain('canary.sourceRevision !== expectedSha');
+    expect(workflow).toContain("observed.outcome !== 'ADK_RUNTIME_OBSERVED'");
+    expect(workflow).toContain("observed.sourceRevision !== expectedSha");
+    expect(workflow).toContain("observed.framework !== 'google-adk'");
+    expect(workflow).toContain("observed.modelId !== 'gemini-3.7-flash'");
+    expect(workflow).toContain('observed.challengeMatched !== true || observed.finalResponseObserved !== true');
+    expect(workflow).toContain("!/^[0-9a-f]{64}$/.test(String(observed.challengeSha256 || ''))");
+    expect(workflow).toContain("!/^[0-9a-f]{64}$/.test(String(observed.responseSha256 || ''))");
+    expect(workflow).toContain('observed.challengeSha256 !== observed.responseSha256');
+    expect(workflow).toContain('Number.isNaN(Date.parse(observed.observedAt))');
+    expect(workflow).toContain('receipt.adkCanaryObserved = true');
+    expect(workflow).toContain("receipt.adkCanaryEndpoint = '/api/runtime/adk-canary'");
+    expect(workflow).toContain('receipt.adkCanaryReceipt = observed');
+  });
+
+  it('never triggers the ADK canary or exposes Gemini/operator secrets from the promotion lane', () => {
+    expect(workflow).not.toContain('x-prooffleet-canary-intent');
+    expect(workflow).not.toContain('GOOGLE_API_KEY');
+    expect(workflow).not.toContain('GEMINI_API_KEY');
+    expect(workflow).not.toContain('PROOFFLEET_OPERATOR_TOKEN');
+    expect(workflow).not.toContain('/api/operator/session');
+    expect(workflow).not.toMatch(/curl[\s\S]{0,120}--request\s+POST[\s\S]{0,120}api\/runtime\/adk-canary/);
   });
 
   it('promotes one exact revision only and never uses floating latest semantics', () => {
@@ -88,14 +118,15 @@ describe('GCP candidate promotion safety contract', () => {
     expect(workflow).toContain('trap - ERR');
   });
 
-  it('requires authoritative 100-percent post-readback and promoted service HTTP health', () => {
+  it('requires authoritative 100-percent post-readback, retained ADK proof and promoted service HTTP health', () => {
     expect(workflow).toContain('post-promotion candidate traffic is ${candidatePercent}, expected 100');
     expect(workflow).toContain('other revisions still receive positive traffic:');
     expect(workflow).toContain('Cloud Run service URL missing after promotion');
+    expect(workflow).toContain("if (receipt.adkCanaryObserved !== true) throw new Error('promotion receipt lost required ADK canary proof before traffic mutation')");
     expect(workflow).toContain('"$SERVICE_URL/api/health"');
     expect(workflow).toContain("receipt.outcome = 'OBSERVED_100_PERCENT_TRAFFIC'");
     expect(workflow).toContain('receipt.serviceHttpHealthObserved = true');
-    expect(workflow).toContain('[promotion] exact candidate serves 100% traffic and passed /api/health');
+    expect(workflow).toContain('[promotion] exact candidate serves 100% traffic, retains observed ADK proof, and passed /api/health');
   });
 
   it('does not create revisions, build images or touch Firestore in the promotion lane', () => {
@@ -105,9 +136,11 @@ describe('GCP candidate promotion safety contract', () => {
     expect(workflow).not.toMatch(/gcloud\s+firestore\b/);
   });
 
-  it('uploads a promotion receipt after successful provider and HTTP readback', () => {
+  it('uploads a promotion receipt only after the observed ADK proof can be retained with provider and HTTP readbacks', () => {
     expect(workflow).toContain("schemaVersion: 'prooffleet.gcp-promotion.v1'");
     expect(workflow).toContain("outcome: 'PREFLIGHT_ONLY'");
+    expect(workflow).toContain('adkCanaryObserved: false');
+    expect(workflow).toContain('receipt.adkCanaryObserved = true');
     expect(workflow).toContain('Upload promotion receipt');
     expect(workflow).toContain('gcp-promotion-receipt.json');
   });
