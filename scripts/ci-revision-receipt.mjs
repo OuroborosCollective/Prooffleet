@@ -10,6 +10,15 @@ function requireSha(label, value) {
   return value.trim();
 }
 
+/**
+ * @param {{
+ *   eventName: string,
+ *   githubSha: string,
+ *   checkedOutSha: string,
+ *   pullRequestHeadSha?: string,
+ *   pullRequestBaseSha?: string,
+ * }} input
+ */
 export function buildRevisionReceipt({
   eventName,
   githubSha,
@@ -67,8 +76,8 @@ function currentCheckedOutSha() {
 
 function runCli() {
   const receipt = buildRevisionReceipt({
-    eventName: process.env.CI_EVENT_NAME,
-    githubSha: process.env.GITHUB_SHA,
+    eventName: process.env.CI_EVENT_NAME ?? '',
+    githubSha: process.env.GITHUB_SHA ?? '',
     checkedOutSha: currentCheckedOutSha(),
     pullRequestHeadSha: process.env.CI_PR_HEAD_SHA,
     pullRequestBaseSha: process.env.CI_PR_BASE_SHA,
