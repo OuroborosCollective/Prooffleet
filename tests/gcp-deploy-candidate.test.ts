@@ -28,7 +28,7 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain("github.actor == 'OuroborosCollective'");
     expect(workflow).toContain("github.event.pull_request.user.login == 'OuroborosCollective'");
     expect(workflow).toContain('github.event.pull_request.head.repo.full_name == github.repository');
-    expect(workflow).toContain("I_APPROVE_PROOFFLEET_CANDIDATE_DEPLOY");
+    expect(workflow).toContain('I_APPROVE_PROOFFLEET_CANDIDATE_DEPLOY');
   });
 
   it('binds a pre-merge deployment to the PR source head and never to the synthetic merge SHA', () => {
@@ -56,13 +56,28 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain('@${{ steps.build.outputs.digest }}');
   });
 
-  it('deploys a zero-traffic revision and never promotes traffic in the candidate lane', () => {
-    expect(workflow).toContain('google-github-actions/deploy-cloudrun@v3');
+  it('derives a unique tagged URL from the exact source SHA while keeping normal traffic at zero', () => {
+    expect(workflow).toContain('CANDIDATE_TAG="pf-${EXPECTED_SOURCE_REVISION:0:12}"');
+    expect(workflow).toContain('echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"');
+    expect(workflow).toContain('tag: ${{ steps.identity.outputs.candidate_tag }}');
     expect(workflow).toContain('no_traffic: true');
+    expect(workflow).toContain('candidate revision unexpectedly receives ${percent}% normal traffic');
+    expect(workflow).toContain('candidate tag URL missing for ${candidateTag}');
     expect(workflow).not.toContain('revision_traffic:');
     expect(workflow).not.toContain('tag_traffic:');
     expect(workflow).not.toContain('LATEST=100');
-    expect(workflow).toContain('candidate revision unexpectedly receives ${percent}% traffic');
+  });
+
+  it('requires provider Ready state, revision labels and an exact tagged HTTP health smoke before promotion', () => {
+    expect(workflow).toContain("c.type === 'Ready' && String(c.status).toLowerCase() === 'true'");
+    expect(workflow).toContain("labels['prooffleet-source-sha'] !== expectedSha");
+    expect(workflow).toContain("String(labels['prooffleet-candidate']) !== 'true'");
+    expect(workflow).toContain('Smoke exact tagged candidate over HTTP before promotion');
+    expect(workflow).toContain('"$CANDIDATE_URL/api/health"');
+    expect(workflow).toContain('Tagged no-traffic candidate never passed /api/health.');
+    expect(workflow).toContain('receipt.httpHealthObserved = true');
+    expect(workflow).toContain("receipt.healthEndpoint = '/api/health'");
+    expect(workflow).toContain('[candidate-smoke] exact tagged candidate passed /api/health with zero normal traffic');
   });
 
   it('merges only the exact source revision into upstream environment instead of replacing AI Studio config', () => {
@@ -76,6 +91,14 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain('runtime-sa-before.txt');
     expect(workflow).toContain('runtime service account changed:');
     expect(workflow).not.toContain('511695074775-compute@developer.gserviceaccount.com');
+  });
+
+  it('produces a receipt that cannot claim a promotable candidate before HTTP health is observed', () => {
+    expect(workflow).toContain("outcome: 'OBSERVED_NO_TRAFFIC_CANDIDATE'");
+    expect(workflow).toContain('providerReady: true');
+    expect(workflow).toContain('httpHealthObserved: false');
+    expect(workflow).toContain('receipt.httpHealthObserved = true');
+    expect(workflow).toContain('Upload candidate deployment receipt');
   });
 
   it('produces a minimal production image from the immutable npm graph', () => {
