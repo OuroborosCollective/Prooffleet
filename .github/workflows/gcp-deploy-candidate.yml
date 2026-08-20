@@ -11,6 +11,11 @@ on:
         description: Type I_APPROVE_PROOFFLEET_CANDIDATE_DEPLOY to create one no-traffic Cloud Run candidate revision.
         required: true
         type: string
+  pull_request:
+    branches:
+      - main
+    types:
+      - labeled
 
 permissions:
   contents: read
@@ -23,6 +28,16 @@ concurrency:
 jobs:
   deploy-candidate:
     name: deploy-candidate-no-traffic
+    if: >-
+      (github.event_name == 'workflow_dispatch') ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'proofleet-deploy-candidate' &&
+        github.actor == 'OuroborosCollective' &&
+        github.event.pull_request.user.login == 'OuroborosCollective' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -33,13 +48,18 @@ jobs:
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.PROOFFLEET_GCP_DEPLOY_SERVICE_ACCOUNT }}
       PROOFFLEET_CLOUDRUN_SERVICE: ${{ vars.PROOFFLEET_CLOUDRUN_SERVICE }}
       PROOFFLEET_ARTIFACT_REPOSITORY: ${{ vars.PROOFFLEET_ARTIFACT_REPOSITORY }}
-      EXPECTED_SOURCE_REVISION: ${{ inputs.expected_source_revision }}
-      DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
+      EXPECTED_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.expected_source_revision }}
+      DEPLOY_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
+      EVENT_ACTOR: ${{ github.actor }}
+      PR_LABEL_NAME: ${{ github.event.label.name }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
 
     steps:
       - name: Checkout exact source revision
         uses: actions/checkout@v7
         with:
+          ref: ${{ env.EXPECTED_SOURCE_REVISION }}
           persist-credentials: false
 
       - name: Fail closed on stale source or missing deployment identity
@@ -61,18 +81,49 @@ jobs:
               exit 2
             fi
           done
+
           if ! printf '%s' "$EXPECTED_SOURCE_REVISION" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo 'expected_source_revision must be an exact lowercase 40-character Git SHA.' >&2
+            echo 'expected source revision must be an exact lowercase 40-character Git SHA.' >&2
             exit 2
           fi
-          if test "$EXPECTED_SOURCE_REVISION" != "$GITHUB_SHA"; then
-            echo "Refusing stale deploy: expected_source_revision=$EXPECTED_SOURCE_REVISION github.sha=$GITHUB_SHA" >&2
+
+          ACTUAL_SOURCE_REVISION="$(git rev-parse HEAD)"
+          if test "$ACTUAL_SOURCE_REVISION" != "$EXPECTED_SOURCE_REVISION"; then
+            echo "Refusing mismatched checkout: expected=$EXPECTED_SOURCE_REVISION actual=$ACTUAL_SOURCE_REVISION" >&2
             exit 2
           fi
-          if test "$DEPLOY_CONFIRMATION" != 'I_APPROVE_PROOFFLEET_CANDIDATE_DEPLOY'; then
-            echo 'Exact candidate-deploy confirmation phrase is required.' >&2
+
+          if test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'; then
+            if test "$EXPECTED_SOURCE_REVISION" != "$GITHUB_SHA"; then
+              echo "Refusing stale manual deploy: expected_source_revision=$EXPECTED_SOURCE_REVISION github.sha=$GITHUB_SHA" >&2
+              exit 2
+            fi
+            if test "$DEPLOY_CONFIRMATION" != 'I_APPROVE_PROOFFLEET_CANDIDATE_DEPLOY'; then
+              echo 'Exact candidate-deploy confirmation phrase is required.' >&2
+              exit 2
+            fi
+          elif test "$GITHUB_EVENT_NAME" = 'pull_request'; then
+            if test "$GITHUB_EVENT_ACTION" != 'labeled'; then
+              echo "Candidate deploy only accepts pull_request:labeled, got action=$GITHUB_EVENT_ACTION" >&2
+              exit 2
+            fi
+            if test "$PR_LABEL_NAME" != 'proofleet-deploy-candidate'; then
+              echo "Unexpected deploy label: $PR_LABEL_NAME" >&2
+              exit 2
+            fi
+            if test "$EVENT_ACTOR" != 'OuroborosCollective' || test "$PR_AUTHOR" != 'OuroborosCollective'; then
+              echo 'Pre-merge candidate deploy requires owner actor and owner-authored PR.' >&2
+              exit 2
+            fi
+            if test "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY"; then
+              echo "Refusing candidate deploy from foreign repository: $PR_HEAD_REPOSITORY" >&2
+              exit 2
+            fi
+          else
+            echo "Unsupported deployment event: $GITHUB_EVENT_NAME" >&2
             exit 2
           fi
+
           if ! printf '%s' "$GCP_WIF_PROVIDER" | grep -Eq '^projects/[0-9]+/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'; then
             echo 'GCP_WIF_PROVIDER is malformed.' >&2
             exit 2
@@ -81,6 +132,10 @@ jobs:
             echo 'GCP_DEPLOY_SERVICE_ACCOUNT is malformed.' >&2
             exit 2
           fi
+
+          echo "deploy_source_revision=$EXPECTED_SOURCE_REVISION"
+          echo "workflow_context_sha=$GITHUB_SHA"
+          echo "deploy_event=$GITHUB_EVENT_NAME"
 
       - name: Authenticate to Google Cloud using WIF
         id: auth
@@ -132,7 +187,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.PROOFFLEET_ARTIFACT_REPOSITORY }}/${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}:${{ github.sha }}
+          tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.PROOFFLEET_ARTIFACT_REPOSITORY }}/${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}:${{ env.EXPECTED_SOURCE_REVISION }}
           provenance: mode=max
 
       - name: Require immutable image digest
@@ -156,10 +211,10 @@ jobs:
           image: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.PROOFFLEET_ARTIFACT_REPOSITORY }}/${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}@${{ steps.build.outputs.digest }}
           no_traffic: true
           env_vars: |-
-            PROOFFLEET_SOURCE_REVISION=${{ github.sha }}
+            PROOFFLEET_SOURCE_REVISION=${{ env.EXPECTED_SOURCE_REVISION }}
           env_vars_update_strategy: merge
           labels: |-
-            prooffleet-source-sha=${{ github.sha }}
+            prooffleet-source-sha=${{ env.EXPECTED_SOURCE_REVISION }}
             prooffleet-candidate=true
 
       - name: Authoritative candidate revision readback
@@ -230,7 +285,7 @@ jobs:
       - name: Upload candidate deployment receipt
         uses: actions/upload-artifact@v4
         with:
-          name: prooffleet-gcp-deploy-candidate-${{ github.sha }}
+          name: prooffleet-gcp-deploy-candidate-${{ env.EXPECTED_SOURCE_REVISION }}
           path: gcp-deploy-candidate-receipt.json
           if-no-files-found: error
           retention-days: 30
