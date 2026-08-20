@@ -63,6 +63,7 @@ jobs:
           persist-credentials: false
 
       - name: Fail closed on stale source or missing deployment identity
+        id: identity
         shell: bash
         run: |
           set -euo pipefail
@@ -133,7 +134,15 @@ jobs:
             exit 2
           fi
 
+          CANDIDATE_TAG="pf-${EXPECTED_SOURCE_REVISION:0:12}"
+          if ! printf '%s' "$CANDIDATE_TAG" | grep -Eq '^[a-z][a-z0-9-]{0,62}$'; then
+            echo "Derived candidate tag is malformed: $CANDIDATE_TAG" >&2
+            exit 2
+          fi
+
+          echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
           echo "deploy_source_revision=$EXPECTED_SOURCE_REVISION"
+          echo "candidate_tag=$CANDIDATE_TAG"
           echo "workflow_context_sha=$GITHUB_SHA"
           echo "deploy_event=$GITHUB_EVENT_NAME"
 
@@ -202,7 +211,7 @@ jobs:
           fi
           echo "image_digest=$IMAGE_DIGEST"
 
-      - name: Deploy candidate revision with zero traffic
+      - name: Deploy tagged candidate revision with zero normal traffic
         id: deploy
         uses: google-github-actions/deploy-cloudrun@v3
         with:
@@ -210,6 +219,7 @@ jobs:
           region: ${{ env.GCP_REGION }}
           image: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.PROOFFLEET_ARTIFACT_REPOSITORY }}/${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}@${{ steps.build.outputs.digest }}
           no_traffic: true
+          tag: ${{ steps.identity.outputs.candidate_tag }}
           env_vars: |-
             PROOFFLEET_SOURCE_REVISION=${{ env.EXPECTED_SOURCE_REVISION }}
           env_vars_update_strategy: merge
@@ -221,6 +231,7 @@ jobs:
         shell: bash
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          CANDIDATE_TAG: ${{ steps.identity.outputs.candidate_tag }}
         run: |
           set -euo pipefail
           SERVICE_JSON="$RUNNER_TEMP/cloudrun-service.json"
@@ -238,9 +249,9 @@ jobs:
           gcloud run revisions describe "$REVISION" \
             --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$REVISION_JSON"
 
-          node - "$SERVICE_JSON" "$REVISION_JSON" "$RUNNER_TEMP/runtime-sa-before.txt" "$RUNNER_TEMP/env-names-before.txt" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" <<'NODE'
+          node - "$SERVICE_JSON" "$REVISION_JSON" "$RUNNER_TEMP/runtime-sa-before.txt" "$RUNNER_TEMP/env-names-before.txt" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" "$CANDIDATE_TAG" <<'NODE'
           const fs = require('fs');
-          const [servicePath, revisionPath, runtimeSaPath, envNamesPath, expectedSha, expectedDigest] = process.argv.slice(2);
+          const [servicePath, revisionPath, runtimeSaPath, envNamesPath, expectedSha, expectedDigest, candidateTag] = process.argv.slice(2);
           const service = JSON.parse(fs.readFileSync(servicePath, 'utf8'));
           const revision = JSON.parse(fs.readFileSync(revisionPath, 'utf8'));
           const runtimeBefore = fs.readFileSync(runtimeSaPath, 'utf8').trim();
@@ -260,9 +271,23 @@ jobs:
           const image = String(container.image || '');
           if (!image.includes(`@${expectedDigest}`)) throw new Error(`revision image is not bound to expected digest ${expectedDigest}: ${image}`);
 
+          const ready = Array.isArray(revision.status?.conditions)
+            ? revision.status.conditions.some((c) => c.type === 'Ready' && String(c.status).toLowerCase() === 'true')
+            : false;
+          if (!ready) throw new Error('candidate revision is not provider-Ready');
+
           const traffic = Array.isArray(service.status?.traffic) ? service.status.traffic : [];
-          const percent = traffic.filter((t) => t.revisionName === revision.metadata?.name).reduce((sum, t) => sum + Number(t.percent || 0), 0);
-          if (percent !== 0) throw new Error(`candidate revision unexpectedly receives ${percent}% traffic`);
+          const candidateTraffic = traffic.filter((t) => t.revisionName === revision.metadata?.name);
+          const percent = candidateTraffic.reduce((sum, t) => sum + Number(t.percent || 0), 0);
+          if (percent !== 0) throw new Error(`candidate revision unexpectedly receives ${percent}% normal traffic`);
+
+          const taggedTarget = candidateTraffic.find((t) => t.tag === candidateTag);
+          const taggedUrl = String(taggedTarget?.url || '');
+          if (!/^https:\/\//.test(taggedUrl)) throw new Error(`candidate tag URL missing for ${candidateTag}`);
+
+          const labels = revision.metadata?.labels || {};
+          if (labels['prooffleet-source-sha'] !== expectedSha) throw new Error('candidate revision source label mismatch');
+          if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('candidate revision marker label missing');
 
           const receipt = {
             schemaVersion: 'prooffleet.gcp-deploy-candidate.v1',
@@ -275,11 +300,56 @@ jobs:
             imageDigest: expectedDigest,
             runtimeServiceAccount: runtimeAfter,
             priorEnvironmentNamesPreserved: true,
+            providerReady: true,
             trafficPercent: percent,
+            candidateTag,
+            candidateUrl: taggedUrl,
+            httpHealthObserved: false,
             observedAt: new Date().toISOString(),
           };
           fs.writeFileSync('gcp-deploy-candidate-receipt.json', JSON.stringify(receipt, null, 2) + '\n');
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/candidate-url.txt', taggedUrl + '\n');
           console.log(JSON.stringify(receipt, null, 2));
+          NODE
+
+      - name: Smoke exact tagged candidate over HTTP before promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANDIDATE_URL="$(cat "$RUNNER_TEMP/candidate-url.txt")"
+          if ! printf '%s' "$CANDIDATE_URL" | grep -Eq '^https://'; then
+            echo "Candidate URL is malformed: $CANDIDATE_URL" >&2
+            exit 2
+          fi
+
+          ready=false
+          for _ in $(seq 1 40); do
+            if curl --fail --silent --show-error --max-time 5 \
+              "$CANDIDATE_URL/api/health" > "$RUNNER_TEMP/candidate-health.json"; then
+              ready=true
+              break
+            fi
+            sleep 0.5
+          done
+          if test "$ready" != true; then
+            echo 'Tagged no-traffic candidate never passed /api/health.' >&2
+            exit 2
+          fi
+
+          node - <<'NODE'
+          const fs = require('fs');
+          const healthPath = process.env.RUNNER_TEMP + '/candidate-health.json';
+          const health = JSON.parse(fs.readFileSync(healthPath, 'utf8'));
+          if (!health || typeof health !== 'object' || Array.isArray(health)) {
+            throw new Error('candidate /api/health did not return a JSON object');
+          }
+          const receiptPath = 'gcp-deploy-candidate-receipt.json';
+          const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          receipt.httpHealthObserved = true;
+          receipt.healthEndpoint = '/api/health';
+          receipt.healthObservedAt = new Date().toISOString();
+          fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
+          console.log('[candidate-smoke] exact tagged candidate passed /api/health with zero normal traffic');
           NODE
 
       - name: Upload candidate deployment receipt
