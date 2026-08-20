@@ -1,9 +1,8 @@
 /**
  * operator.ts — fuehrt freigegebene Operationen aus.
  * Permissions: [read, write, execute].
- * EHRLICHKEIT: Ohne injizierten Executor bzw. ohne erteilten Consent wird
- * NICHTS ausgefuehrt — Status 'not_executed' / 'blocked_consent_required',
- * niemals ein behaupteter Erfolg.
+ * EHRLICHKEIT: Ohne injizierten oder real provisionierten Executor bzw. ohne
+ * erteilten Consent wird NICHTS ausgefuehrt — niemals behaupteter Erfolg.
  */
 
 import type {
@@ -11,6 +10,7 @@ import type {
   EvidenceAssertion,
   EvidenceSourceKind,
 } from '../../src/types/index';
+import { createFirestoreOperatorExecutor } from '../ops/firestoreEffect';
 import { AgentContext, AgentOutput, FleetAgent } from './base';
 
 export interface OperatorExecutionResult {
@@ -80,23 +80,26 @@ export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
         };
       }
 
-      if (!executor) {
+      const effectiveExecutor =
+        executor ?? (await createFirestoreOperatorExecutor(process.env));
+
+      if (!effectiveExecutor) {
         const evidenceId = ctx.emitEvidence('operation not executed', 'operation_status', {
           status: 'not_executed',
           assertion: 'UNAVAILABLE',
           sourceKind: 'AGENT_OUTPUT',
           operationId,
-          reason: 'no operation executor configured',
+          reason: 'real Firestore executor is not provisioned',
         });
         return {
           role: agent.role,
-          summary: 'Consent vorhanden, aber kein OperationExecutor konfiguriert — ehrlich nicht ausgefuehrt.',
+          summary: 'Consent vorhanden, aber realer Firestore-Executor nicht provisioniert — ehrlich nicht ausgefuehrt.',
           evidenceIds: [evidenceId],
-          findings: { status: 'not_executed', reason: 'no operation executor configured' },
+          findings: { status: 'not_executed', reason: 'real Firestore executor is not provisioned' },
         };
       }
 
-      const result = await executor.execute(spec, consent as ConsentGrant);
+      const result = await effectiveExecutor.execute(spec, consent as ConsentGrant);
       const assertion = assertionFor(result);
       const sourceKind = result.sourceKind ?? 'AGENT_OUTPUT';
       const evidenceId = ctx.emitEvidence('operation executed via executor', 'operation_result', {
