@@ -206,6 +206,10 @@ jobs:
             revisionName,
             candidateUrl,
             priorTraffic: positive,
+            providerReady: false,
+            prePromotionTrafficPercent: null,
+            candidateHttpHealthObserved: false,
+            adkCanaryObserved: false,
             preflightObservedAt: new Date().toISOString(),
           }, null, 2) + '\n');
           NODE
@@ -256,7 +260,7 @@ jobs:
 
           echo "candidate_revision=$(cat "$RUNNER_TEMP/promotion-revision-name.txt")" >> "$GITHUB_OUTPUT"
 
-      - name: Re-smoke exact tagged candidate immediately before traffic mutation
+      - name: Re-smoke exact tagged candidate and require observed ADK canary before traffic mutation
         shell: bash
         run: |
           set -euo pipefail
@@ -274,7 +278,62 @@ jobs:
             echo 'Refusing promotion because tagged candidate did not pass /api/health.' >&2
             exit 2
           fi
-          node -e "const fs=require('fs');const h=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/promotion-candidate-health.json','utf8'));if(!h||typeof h!=='object'||Array.isArray(h))process.exit(2);console.log('[promotion-preflight] tagged candidate HTTP health observed')"
+
+          curl --fail --silent --show-error --max-time 5 \
+            "$CANDIDATE_URL/api/runtime/adk-canary" > "$RUNNER_TEMP/promotion-adk-canary.json"
+
+          node - "$EXPECTED_SOURCE_REVISION" <<'NODE'
+          const fs = require('fs');
+          const [expectedSha] = process.argv.slice(2);
+          const health = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/promotion-candidate-health.json', 'utf8'));
+          if (!health || typeof health !== 'object' || Array.isArray(health)) {
+            throw new Error('candidate health payload is not a JSON object');
+          }
+
+          const canary = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/promotion-adk-canary.json', 'utf8'));
+          if (!canary || typeof canary !== 'object' || Array.isArray(canary)) {
+            throw new Error('candidate ADK canary payload is not a JSON object');
+          }
+          if (canary.eligible !== true) throw new Error('candidate runtime is not eligible for ADK canary proof');
+          if (canary.sourceRevision !== expectedSha) {
+            throw new Error(`candidate ADK canary source mismatch: expected ${expectedSha}, got ${canary.sourceRevision || '<missing>'}`);
+          }
+          if (canary.status !== 'OBSERVED') {
+            throw new Error(`refusing promotion without observed ADK canary: ${canary.status || '<missing>'}`);
+          }
+
+          const observed = canary.receipt || {};
+          if (observed.outcome !== 'ADK_RUNTIME_OBSERVED') throw new Error('ADK canary outcome mismatch');
+          if (observed.sourceRevision !== expectedSha) throw new Error('ADK canary receipt source mismatch');
+          if (observed.framework !== 'google-adk') throw new Error('ADK canary framework mismatch');
+          if (observed.modelId !== 'gemini-3.7-flash') throw new Error('ADK canary model mismatch');
+          if (observed.challengeMatched !== true || observed.finalResponseObserved !== true) {
+            throw new Error('ADK canary challenge was not authoritatively observed');
+          }
+          if (!/^[0-9a-f]{64}$/.test(String(observed.challengeSha256 || ''))) {
+            throw new Error('ADK canary challenge hash is malformed');
+          }
+          if (!/^[0-9a-f]{64}$/.test(String(observed.responseSha256 || ''))) {
+            throw new Error('ADK canary response hash is malformed');
+          }
+          if (observed.challengeSha256 !== observed.responseSha256) {
+            throw new Error('ADK canary challenge and response hashes differ');
+          }
+          if (!observed.observedAt || Number.isNaN(Date.parse(observed.observedAt))) {
+            throw new Error('ADK canary observation timestamp is missing or malformed');
+          }
+
+          const receiptPath = 'gcp-promotion-receipt.json';
+          const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          receipt.candidateHttpHealthObserved = true;
+          receipt.candidateHealthEndpoint = '/api/health';
+          receipt.adkCanaryObserved = true;
+          receipt.adkCanaryEndpoint = '/api/runtime/adk-canary';
+          receipt.adkCanaryReceipt = observed;
+          receipt.adkCanaryReadbackObservedAt = new Date().toISOString();
+          fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
+          console.log('[promotion-preflight] tagged candidate health and exact source-bound ADK canary observed');
+          NODE
 
       - name: Promote exact revision with automatic rollback on failed post-readback
         shell: bash
@@ -331,6 +390,7 @@ jobs:
 
           const receiptPath = 'gcp-promotion-receipt.json';
           const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          if (receipt.adkCanaryObserved !== true) throw new Error('promotion receipt lost required ADK canary proof before traffic mutation');
           receipt.outcome = 'OBSERVED_100_PERCENT_TRAFFIC';
           receipt.postPromotionTrafficPercent = candidatePercent;
           receipt.otherPositiveTrafficTargets = 0;
@@ -364,7 +424,7 @@ jobs:
           receipt.healthEndpoint = '/api/health';
           receipt.healthObservedAt = new Date().toISOString();
           fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
-          console.log('[promotion] exact candidate serves 100% traffic and passed /api/health');
+          console.log('[promotion] exact candidate serves 100% traffic, retains observed ADK proof, and passed /api/health');
           NODE
 
           PROMOTION_STARTED=false
