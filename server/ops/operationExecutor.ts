@@ -10,9 +10,11 @@
  *   Promise; handler.apply laeuft exakt einmal. Nach Abschluss wandert
  *   das Result in die Idempotency-Map.
  * - Readback-before-retry: fuer kind 'write'/'execute' laeuft VOR dem
- *   Erstversuch und VOR jedem Retry handler.readback(spec). Zeigt der
- *   Readback den Zielzustand bereits, gilt die Operation als
- *   'already_applied' und es wird NICHT geschrieben.
+ *   Erstversuch und VOR jedem Retry handler.readback(spec).
+ * - EIN READBACK-FEHLER autorisiert niemals einen Write. Stattdessen wird
+ *   ausschliesslich der Readback bounded erneut versucht.
+ * - Ein expliziter Readback-Konflikt (gleiche operationId, andere gebundene
+ *   Identitaet) bricht sofort fail-closed ab und wird niemals ueberschrieben.
  * - kind 'write'/'execute' ohne validen Grant -> 'blocked_consent_required',
  *   kein apply. kind 'read' braucht keinen Grant.
  * - Retry: max. 3 Versuche (konfigurierbar), exponential backoff mit
@@ -27,9 +29,10 @@ export interface OperationHandler {
   /**
    * Readback-Vertrag: liefert den tatsaechlichen Zustand der Zielressource.
    * Rueckgabe-Konvention:
-   *  - null / undefined            -> Zielzustand NICHT erreicht
-   *  - { applied: boolean, ... }   -> 'applied' entscheidet; Rest ist Evidence
-   *  - jeder andere truthy Wert    -> Zielzustand erreicht, Wert ist Evidence
+   *  - null / undefined                     -> Zielzustand NICHT erreicht
+   *  - { applied: boolean, ... }            -> 'applied' entscheidet
+   *  - { applied:false, conflict:true, ...} -> Identitaetskonflikt; nie schreiben
+   *  - jeder andere truthy Wert             -> Zielzustand erreicht, Wert ist Evidence
    */
   readback(spec: OperationSpec): Promise<unknown>;
 }
@@ -56,10 +59,7 @@ export interface GrantValidator {
 }
 
 export interface OperationExecutorOptions {
-  /**
-   * Validator fuer ConsentGrants (typisch: ConsentEngine-Instanz).
-   * Default: intrinsische Pruefung (operationHash-Match, APPROVED, Ablauf).
-   */
+  /** Validator fuer ConsentGrants (typisch: ConsentEngine-Instanz). */
   grantValidator?: GrantValidator;
   /** Maximale Versuche inkl. Erstversuch. Default: 3. */
   maxAttempts?: number;
@@ -102,20 +102,24 @@ class IntrinsicGrantValidator implements GrantValidator {
 
 interface ReadbackVerdict {
   applied: boolean;
+  conflict: boolean;
   evidence?: unknown;
 }
 
 function interpretReadback(value: unknown): ReadbackVerdict {
   if (value === null || value === undefined) {
-    return { applied: false };
+    return { applied: false, conflict: false };
   }
-  if (typeof value === 'object' && 'applied' in value) {
-    const rec = value as { applied: unknown };
+  if (typeof value === 'object') {
+    const rec = value as { applied?: unknown; conflict?: unknown };
+    if (rec.conflict === true) {
+      return { applied: false, conflict: true, evidence: value };
+    }
     if (typeof rec.applied === 'boolean') {
-      return { applied: rec.applied, evidence: value };
+      return { applied: rec.applied, conflict: false, evidence: value };
     }
   }
-  return { applied: Boolean(value), evidence: value };
+  return { applied: Boolean(value), conflict: false, evidence: value };
 }
 
 export class OperationExecutor {
@@ -140,16 +144,11 @@ export class OperationExecutor {
     handler: OperationHandler,
     grant?: ConsentGrant,
   ): Promise<OperationResult> {
-    // Idempotency: finales Result zurueckgeben, keine Re-Execution.
     const cached = this.finalResults.get(spec.operationId);
     if (cached) {
       return cached;
     }
 
-    // In-Flight-Dedup: laeuft fuer diese operationId bereits eine
-    // Ausfuehrung, awaiten konkurrierende Aufrufe dasselbe Promise.
-    // Der Cache wird erst in finish() gesetzt — ohne diese Sperre koennten
-    // zwei parallele execute()-Aufrufe handler.apply doppelt ausfuehren.
     const running = this.inFlight.get(spec.operationId);
     if (running) {
       return running;
@@ -198,14 +197,27 @@ export class OperationExecutor {
     let lastError: string | undefined;
 
     while (attempts < this.maxAttempts) {
-      // Readback VOR jedem Versuch (Erstversuch und jeder Retry) — fuer
-      // read liefert der Readback selbst das Ergebnis.
       let rb: ReadbackVerdict;
       try {
         rb = interpretReadback(await handler.readback(spec));
       } catch (err) {
-        rb = { applied: false };
+        // CRITICAL: fehlender Readback ist KEINE Erlaubnis zu schreiben.
+        attempts += 1;
         lastError = `readback failed: ${errorMessage(err)}`;
+        if (attempts < this.maxAttempts) {
+          await this.sleep(this.baseBackoffMs * 2 ** (attempts - 1));
+        }
+        continue;
+      }
+
+      if (rb.conflict) {
+        return this.finish(spec.operationId, {
+          status: 'failed',
+          operationId: spec.operationId,
+          attempts,
+          readbackEvidence: rb.evidence,
+          error: 'readback conflict: existing target identity differs from requested operation',
+        });
       }
 
       if (spec.kind === 'read') {
@@ -218,9 +230,8 @@ export class OperationExecutor {
             readbackEvidence: rb.evidence,
           });
         }
-        lastError = lastError ?? 'readback returned no data';
+        lastError = 'readback returned no data';
       } else if (rb.applied) {
-        // Zielzustand bereits erreicht -> KEIN apply.
         return this.finish(spec.operationId, {
           status: 'already_applied',
           operationId: spec.operationId,
@@ -231,7 +242,26 @@ export class OperationExecutor {
         attempts += 1;
         try {
           await handler.apply(spec);
-          const confirm = interpretReadback(await handler.readback(spec));
+          let confirm: ReadbackVerdict;
+          try {
+            confirm = interpretReadback(await handler.readback(spec));
+          } catch (err) {
+            lastError = `post-apply readback failed: ${errorMessage(err)}`;
+            if (attempts < this.maxAttempts) {
+              await this.sleep(this.baseBackoffMs * 2 ** (attempts - 1));
+            }
+            continue;
+          }
+
+          if (confirm.conflict) {
+            return this.finish(spec.operationId, {
+              status: 'failed',
+              operationId: spec.operationId,
+              attempts,
+              readbackEvidence: confirm.evidence,
+              error: 'post-apply readback conflict: target identity differs from requested operation',
+            });
+          }
           if (confirm.applied) {
             return this.finish(spec.operationId, {
               status: 'applied',
@@ -246,7 +276,6 @@ export class OperationExecutor {
         }
       }
 
-      // Exponential backoff vor dem naechsten Versuch (nie ohne Readback danach).
       if (attempts < this.maxAttempts) {
         await this.sleep(this.baseBackoffMs * 2 ** (attempts - 1));
       }
@@ -265,10 +294,7 @@ export class OperationExecutor {
     return this.finalResults.get(operationId);
   }
 
-  private finish(
-    operationId: string,
-    result: OperationResult,
-  ): OperationResult {
+  private finish(operationId: string, result: OperationResult): OperationResult {
     this.finalResults.set(operationId, result);
     return result;
   }
