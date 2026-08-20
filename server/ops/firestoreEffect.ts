@@ -1,4 +1,5 @@
 import { canonicalJson, sha256Hex } from '../evidence/canonicalJson';
+import { normalizeExactGitRevision } from '../revisionIdentity';
 import {
   OperationExecutor,
   type GrantValidator,
@@ -18,7 +19,7 @@ export interface FirestoreEffectIdentity extends Record<string, unknown> {
   actionName: string;
   targetResource: string;
   parametersHash: string;
-  sourceRevision: string | null;
+  sourceRevision: string;
 }
 
 export interface FirestoreEffectSnapshot {
@@ -36,7 +37,7 @@ export interface FirestoreEffectStore {
 function expectedIdentity(
   spec: OperationSpec,
   collection: string,
-  sourceRevision: string | null,
+  sourceRevision: string,
 ): FirestoreEffectIdentity {
   if (spec.kind !== 'write' && spec.kind !== 'execute') {
     throw new Error(`Firestore effect requires write/execute operation, got ${spec.kind}`);
@@ -48,6 +49,10 @@ function expectedIdentity(
   const computedParametersHash = sha256Hex(canonicalJson(spec.parameters));
   if (computedParametersHash !== spec.parametersHash) {
     throw new Error('parametersHash mismatch');
+  }
+  const operationSourceRevision = normalizeExactGitRevision(spec.parameters.sourceRevision);
+  if (operationSourceRevision !== sourceRevision) {
+    throw new Error('operation sourceRevision does not match executor source revision');
   }
   return {
     schemaVersion: EFFECT_SCHEMA,
@@ -70,9 +75,7 @@ function projectObservedIdentity(data: Record<string, unknown>): Partial<Firesto
     actionName: typeof data.actionName === 'string' ? data.actionName : undefined,
     targetResource: typeof data.targetResource === 'string' ? data.targetResource : undefined,
     parametersHash: typeof data.parametersHash === 'string' ? data.parametersHash : undefined,
-    sourceRevision: typeof data.sourceRevision === 'string' || data.sourceRevision === null
-      ? data.sourceRevision as string | null
-      : undefined,
+    sourceRevision: typeof data.sourceRevision === 'string' ? data.sourceRevision : undefined,
   };
 }
 
@@ -83,7 +86,7 @@ function identitiesEqual(expected: FirestoreEffectIdentity, observed: Partial<Fi
 export class FirestoreEffectHandler implements OperationHandler {
   constructor(
     private readonly store: FirestoreEffectStore,
-    private readonly sourceRevision: string | null,
+    private readonly sourceRevision: string,
   ) {}
 
   async apply(spec: OperationSpec): Promise<void> {
@@ -130,11 +133,13 @@ export class FirestoreOperatorExecutor implements OperatorExecutor {
 
   constructor(
     store: FirestoreEffectStore,
-    sourceRevision: string | null,
+    sourceRevision: string,
     grantValidator?: GrantValidator,
   ) {
+    const exactRevision = normalizeExactGitRevision(sourceRevision);
+    if (!exactRevision) throw new Error('exact lowercase 40-character Git source revision required');
     this.core = new OperationExecutor(grantValidator ? { grantValidator } : {});
-    this.handler = new FirestoreEffectHandler(store, sourceRevision);
+    this.handler = new FirestoreEffectHandler(store, exactRevision);
   }
 
   async execute(specValue: unknown, grantValue?: ConsentGrant): Promise<OperatorExecutionResult> {
@@ -208,9 +213,7 @@ export async function createFirestoreOperatorExecutor(
   env: FirestoreEffectEnvironment,
   grantValidator?: GrantValidator,
 ): Promise<FirestoreOperatorExecutor | undefined> {
-  // Runtime proof is revision-bound. If the deployment did not inject the
-  // exact immutable source revision, the real effect path remains unavailable.
-  const sourceRevision = env.PROOFFLEET_SOURCE_REVISION?.trim();
+  const sourceRevision = normalizeExactGitRevision(env.PROOFFLEET_SOURCE_REVISION);
   if (!sourceRevision) return undefined;
 
   const store = await createRealFirestoreEffectStore(env);
