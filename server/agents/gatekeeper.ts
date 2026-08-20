@@ -7,6 +7,7 @@
 
 import { AgentContext, AgentOutput, FleetAgent, requirePermission } from './base';
 import { canonicalJson, sha256Hex } from '../evidence/canonicalJson';
+import { normalizeExactGitRevision } from '../revisionIdentity';
 
 export interface GatekeeperOperationSpec {
   operationId: string;
@@ -22,17 +23,19 @@ export interface GatekeeperOperationSpec {
 /**
  * Baut die eine mutierende Demo-Operation deterministisch auf Firestore.
  * Der rohe Missionsinhalt wird NICHT in die Operation oder Firestore-Evidence
- * kopiert; gebunden wird nur sein SHA-256 plus Revision.
+ * kopiert; gebunden wird nur sein SHA-256 plus exakte Source-Revision.
  */
 export function deriveOperationSpec(
   ctx: AgentContext,
   collection = process.env.PROOFFLEET_FIRESTORE_COLLECTION?.trim() || 'NOT_PROVISIONED',
+  sourceRevision = normalizeExactGitRevision(process.env.PROOFFLEET_SOURCE_REVISION),
 ): GatekeeperOperationSpec {
   const actionName = 'record_mission_proof';
   const targetResource = `firestore:${collection}`;
   const parameters = {
     goalHash: sha256Hex(ctx.inputGoal),
     missionRevision: ctx.missionRevision,
+    sourceRevision,
   };
   const parametersHash = sha256Hex(canonicalJson(parameters));
   const operationId = `op-${sha256Hex(
@@ -77,6 +80,7 @@ export function createGatekeeperAgent(): FleetAgent {
         actionName: spec.actionName,
         targetResource: spec.targetResource,
         parametersHash: spec.parametersHash,
+        sourceRevisionBound: typeof spec.parameters.sourceRevision === 'string',
         status: 'PENDING',
       });
 
