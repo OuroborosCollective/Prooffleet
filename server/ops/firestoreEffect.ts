@@ -130,10 +130,10 @@ export class FirestoreOperatorExecutor implements OperatorExecutor {
 
   constructor(
     store: FirestoreEffectStore,
-    grantValidator: GrantValidator,
     sourceRevision: string | null,
+    grantValidator?: GrantValidator,
   ) {
-    this.core = new OperationExecutor({ grantValidator });
+    this.core = new OperationExecutor(grantValidator ? { grantValidator } : {});
     this.handler = new FirestoreEffectHandler(store, sourceRevision);
   }
 
@@ -206,10 +206,10 @@ export async function createRealFirestoreEffectStore(
 
 export async function createFirestoreOperatorExecutor(
   env: FirestoreEffectEnvironment,
-  grantValidator: GrantValidator,
+  grantValidator?: GrantValidator,
 ): Promise<FirestoreOperatorExecutor | undefined> {
   const store = await createRealFirestoreEffectStore(env);
   if (!store) return undefined;
   const sourceRevision = env.PROOFFLEET_SOURCE_REVISION?.trim() || null;
-  return new FirestoreOperatorExecutor(store, grantValidator, sourceRevision);
+  return new FirestoreOperatorExecutor(store, sourceRevision, grantValidator);
 }
