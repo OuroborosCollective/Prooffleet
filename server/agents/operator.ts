@@ -7,6 +7,7 @@
  */
 
 import type {
+  ConsentGrant,
   EvidenceAssertion,
   EvidenceSourceKind,
 } from '../../src/types/index';
@@ -22,7 +23,7 @@ export interface OperatorExecutionResult {
 }
 
 export interface OperatorExecutor {
-  execute(spec: unknown): Promise<OperatorExecutionResult>;
+  execute(spec: unknown, grant?: ConsentGrant): Promise<OperatorExecutionResult>;
 }
 
 function assertionFor(result: OperatorExecutionResult): EvidenceAssertion {
@@ -64,7 +65,7 @@ export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
         };
       }
 
-      if (!consent) {
+      if (!consent || typeof consent !== 'object') {
         const evidenceId = ctx.emitEvidence('operation blocked: consent required', 'operation_status', {
           status: 'blocked_consent_required',
           assertion: 'UNAVAILABLE',
@@ -95,7 +96,7 @@ export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
         };
       }
 
-      const result = await executor.execute(spec);
+      const result = await executor.execute(spec, consent as ConsentGrant);
       const assertion = assertionFor(result);
       const sourceKind = result.sourceKind ?? 'AGENT_OUTPUT';
       const evidenceId = ctx.emitEvidence('operation executed via executor', 'operation_result', {
