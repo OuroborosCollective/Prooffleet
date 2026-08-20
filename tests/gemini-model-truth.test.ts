@@ -13,6 +13,7 @@ import {
 import { createOrchestratorAgent } from '../server/agents/orchestrator';
 import { createScoutAgent } from '../server/agents/scout';
 import {
+  getGenAI,
   getGeminiApiKey,
   PROOFFLEET_GEMINI_MODEL,
   PROOFFLEET_GEMINI_PROVIDER,
@@ -25,6 +26,7 @@ const geminiSource = readFileSync(join(here, '../server/gemini.ts'), 'utf8');
 const contractsSource = readFileSync(join(here, '../server/contracts.ts'), 'utf8');
 const packageJson = JSON.parse(readFileSync(join(here, '../package.json'), 'utf8')) as {
   dependencies?: Record<string, string>;
+  overrides?: Record<string, string>;
 };
 
 function context() {
@@ -73,6 +75,13 @@ describe('Gemini, Google ADK and manifest truth contract', () => {
     expect(geminiSource).toContain('isFinalResponse(event)');
     expect(geminiSource).toContain('google_adk_no_final_response');
     expect(geminiSource).not.toContain('new GoogleGenAI');
+  });
+
+  it('pins patched high/critical ADK transitives instead of weakening the audit gate', () => {
+    expect(packageJson.overrides).toEqual({
+      'adm-zip': '0.6.0',
+      tar: '7.5.22',
+    });
   });
 
   it('keeps ADK tool-less and outside execution, consent, evidence and Judge authority', () => {
@@ -197,6 +206,23 @@ describe('Gemini, Google ADK and manifest truth contract', () => {
       delete process.env.GOOGLE_API_KEY;
       process.env.GEMINI_API_KEY = 'test-legacy-key';
       expect(getGeminiApiKey()).toBe('test-legacy-key');
+    } finally {
+      if (previousGoogle === undefined) delete process.env.GOOGLE_API_KEY;
+      else process.env.GOOGLE_API_KEY = previousGoogle;
+      if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = previousGemini;
+    }
+  });
+
+  it('constructs the real ADK reasoning runner without a network call', () => {
+    const previousGoogle = process.env.GOOGLE_API_KEY;
+    const previousGemini = process.env.GEMINI_API_KEY;
+    try {
+      process.env.GOOGLE_API_KEY = 'test-same-key';
+      process.env.GEMINI_API_KEY = 'test-same-key';
+      const provider = getGenAI();
+      expect(provider).not.toBeNull();
+      expect(typeof provider?.models.generateContent).toBe('function');
     } finally {
       if (previousGoogle === undefined) delete process.env.GOOGLE_API_KEY;
       else process.env.GOOGLE_API_KEY = previousGoogle;
