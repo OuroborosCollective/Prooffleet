@@ -397,27 +397,31 @@ export class FleetRunner {
     );
 
     const pendingOperation = mission.consentRequests.at(-1)?.spec;
-    const proofRequirements: ProofRequirement[] =
-      consentApproved && mission.requireConsentForWrite && pendingOperation
-        ? [
-            {
-              requirementId: "external_effect_readback",
-              evidenceType: "operation_result",
-              allowedSourceKinds: [
-                "REPOSITORY_READBACK",
-                "CI_READBACK",
-                "CLOUD_RUN_READBACK",
-                "PUBSUB_READBACK",
-                "FIRESTORE_READBACK",
-                "API_READBACK",
-                "TEST_READBACK",
-              ],
-              runtimeRequired: true,
-              operationId: pendingOperation.operationId,
-              minCount: 1,
-            },
-          ]
-        : [];
+    const authoritativeEffectSources: ProofRequirement["allowedSourceKinds"] = [
+      "REPOSITORY_READBACK",
+      "CI_READBACK",
+      "CLOUD_RUN_READBACK",
+      "PUBSUB_READBACK",
+      "FIRESTORE_READBACK",
+      "API_READBACK",
+      "TEST_READBACK",
+    ];
+
+    // Disabling consent must never disable evidence. Until a mission is
+    // explicitly classified as read-only with its own completion contract,
+    // every continuing mission needs authoritative operation readback.
+    const proofRequirements: ProofRequirement[] = consentApproved
+      ? [
+          {
+            requirementId: "external_effect_readback",
+            evidenceType: "operation_result",
+            allowedSourceKinds: authoritativeEffectSources,
+            runtimeRequired: true,
+            operationId: pendingOperation?.operationId,
+            minCount: 1,
+          },
+        ]
+      : [];
 
     const judgeVerdict: VerdictRecord = Judge.judge(
       FINALIZE_CLAIM,
