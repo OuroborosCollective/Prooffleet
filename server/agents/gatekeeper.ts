@@ -5,9 +5,8 @@
  * Niemals Auto-Approve, niemals Timeout-Approve.
  */
 
-import { createHash } from 'node:crypto';
-
 import { AgentContext, AgentOutput, FleetAgent, requirePermission } from './base';
+import { canonicalJson, sha256Hex } from '../evidence/canonicalJson';
 
 export interface GatekeeperOperationSpec {
   operationId: string;
@@ -20,25 +19,39 @@ export interface GatekeeperOperationSpec {
   missionRevision: number;
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`);
-  return `{${entries.join(',')}}`;
-}
+/**
+ * Baut die eine mutierende Demo-Operation deterministisch auf Firestore.
+ * Der rohe Missionsinhalt wird NICHT in die Operation oder Firestore-Evidence
+ * kopiert; gebunden wird nur sein SHA-256 plus Revision.
+ */
+export function deriveOperationSpec(
+  ctx: AgentContext,
+  collection = process.env.PROOFFLEET_FIRESTORE_COLLECTION?.trim() || 'NOT_PROVISIONED',
+): GatekeeperOperationSpec {
+  const actionName = 'record_mission_proof';
+  const targetResource = `firestore:${collection}`;
+  const parameters = {
+    goalHash: sha256Hex(ctx.inputGoal),
+    missionRevision: ctx.missionRevision,
+  };
+  const parametersHash = sha256Hex(canonicalJson(parameters));
+  const operationId = `op-${sha256Hex(
+    canonicalJson({
+      missionId: ctx.missionId,
+      missionRevision: ctx.missionRevision,
+      actionName,
+      targetResource,
+      parametersHash,
+    }),
+  ).slice(0, 20)}`;
 
-/** Baut eine konkrete OperationSpec aus dem Missionsziel (deterministisch). */
-export function deriveOperationSpec(ctx: AgentContext): GatekeeperOperationSpec {
-  const parameters = { goal: ctx.inputGoal };
   return {
-    operationId: `op-${createHash('sha256').update(`${ctx.missionId}:${ctx.missionRevision}:${ctx.inputGoal}`).digest('hex').slice(0, 16)}`,
-    kind: 'execute',
-    actionName: 'deploy_mission_artifacts',
-    targetResource: 'mission-artifact-store',
+    operationId,
+    kind: 'write',
+    actionName,
+    targetResource,
     parameters,
-    parametersHash: createHash('sha256').update(canonicalJson(parameters)).digest('hex'),
+    parametersHash,
     missionId: ctx.missionId,
     missionRevision: ctx.missionRevision,
   };
@@ -51,7 +64,7 @@ export function createGatekeeperAgent(): FleetAgent {
     async run(ctx: AgentContext): Promise<AgentOutput> {
       requirePermission(agent, 'consent_gate');
       if (typeof ctx.requestConsent !== 'function') {
-        throw new Error("context_violation: gatekeeper requires ctx.requestConsent but it is missing");
+        throw new Error('context_violation: gatekeeper requires ctx.requestConsent but it is missing');
       }
 
       const spec = deriveOperationSpec(ctx);
@@ -62,6 +75,8 @@ export function createGatekeeperAgent(): FleetAgent {
         operationId: spec.operationId,
         kind: spec.kind,
         actionName: spec.actionName,
+        targetResource: spec.targetResource,
+        parametersHash: spec.parametersHash,
         status: 'PENDING',
       });
 
