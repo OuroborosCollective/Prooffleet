@@ -147,7 +147,11 @@ EXPECTED_CONDITION="assertion.repository == '${GITHUB_REPO}'"
 
 # Preflight the target service before planning any mutation. This is also the
 # authority for the runtime service identity that must remain attached to new
-# revisions.
+# revisions. Cloud Run may legitimately use a custom service account such as
+# name@project.iam.gserviceaccount.com or a Google-provided default identity
+# such as <project-number>-compute@developer.gserviceaccount.com, so validate
+# the provider-observed value as a Google service-account address rather than
+# assuming only the custom iam.gserviceaccount.com form.
 if ! gcloud run services describe "$CLOUD_RUN_SERVICE" \
   --project="$PROJECT_ID" --region="$REGION" >/dev/null 2>&1; then
   echo "Cloud Run service '$CLOUD_RUN_SERVICE' was not found in '$PROJECT_ID/$REGION'." >&2
@@ -157,7 +161,7 @@ fi
 RUNTIME_SA="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
   --project="$PROJECT_ID" --region="$REGION" \
   --format='value(spec.template.spec.serviceAccountName)')"
-if [[ ! "$RUNTIME_SA" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$ ]]; then
+if [[ ! "$RUNTIME_SA" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com$ ]]; then
   echo "Cloud Run runtime service account could not be read authoritatively: '$RUNTIME_SA'" >&2
   exit 4
 fi
