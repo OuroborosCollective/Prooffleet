@@ -1,293 +1,403 @@
 # ProofFleet Hardening Handoff — 2026-08-20
 
-Status: **checkpoint / manual live-GCP proof lane prepared — NOT executed**
+Status: **checkpoint / Gemini truth contract closed / live GCP proof prepared but NOT executed**
 
-Repository: `OuroborosCollective/Prooffleet`
-Branch: `hardening/fortified-fleet`
-PR: `#1 Hardening: evidence-first fortified fleet` — **Draft**
+Repository: `OuroborosCollective/Prooffleet`  
+Branch: `hardening/fortified-fleet`  
+PR: `#1 Hardening: evidence-first fortified fleet` — **Draft**  
 Base `main`: `89302dfbe1ef732ff3962b47ce914a7e299f5075`
-Last verified source head: `df57a7ed847af127b319a686aef34129dc818362`
-GitHub synthetic merge SHA tested for that head: `450e413544c613e8f9941f2e4aa62d4afe8b2671`
-GitHub Actions run: `32328115254` / run number `85`
 
-## Latest verified checkpoint
+## Last fully verified code checkpoint
 
-The source head `df57a7ed847af127b319a686aef34129dc818362` was read back from PR metadata. GitHub Actions run #85 completed successfully against the synthetic merge candidate `450e413544c613e8f9941f2e4aa62d4afe8b2671`.
+Source head:
+
+```text
+ac27410b85d1fe9cdfed4c4b1ba08550e323c9c6
+```
+
+GitHub synthetic merge SHA tested for that source head:
+
+```text
+8c7ea390b817d385db2e31d31ab6e6332ba67990
+```
+
+GitHub Actions:
+
+```text
+run id:     32329696756
+run number: 105
+```
 
 Remote evidence from that one run:
 
 - immutable dependency install via `npm ci`
 - TypeScript `tsc --noEmit` passed
-- **23 test files passed**
-- **92 tests passed**
+- **24 test files passed**
+- **99 tests passed**
 - production truth guards passed
 - Vite + esbuild production build passed
 - real production-server HTTP smoke passed on injected `PORT=3187`
 - authenticated consent production HTTP E2E passed
 - high/critical dependency audit passed
-- package-lock bootstrap correctly skipped
-- CI revision receipt separates source head from synthetic merge SHA
-- Cloud Run readback regressions prove old/mismatched source revisions cannot be accepted as current deployment proof
-- live-GCP proof-plan regressions prove no mutation authorization without the exact workflow-dispatch confirmation phrase
-- live-GCP workflow regressions prove the workflow is manual-only and uses OIDC/Workload Identity Federation rather than a long-lived service-account JSON key
+- package-lock bootstrap skipped because lock already exists
+- CI revision receipt separated branch source head from GitHub synthetic merge SHA
 
-Exact revision receipt from run #85:
+Exact CI revision receipt:
 
 ```json
 {
   "schemaVersion": "prooffleet.ci-revision-receipt.v1",
   "eventName": "pull_request",
-  "sourceHeadSha": "df57a7ed847af127b319a686aef34129dc818362",
+  "sourceHeadSha": "ac27410b85d1fe9cdfed4c4b1ba08550e323c9c6",
   "baseSha": "89302dfbe1ef732ff3962b47ce914a7e299f5075",
-  "testedCheckoutSha": "450e413544c613e8f9941f2e4aa62d4afe8b2671",
-  "testedMergeSha": "450e413544c613e8f9941f2e4aa62d4afe8b2671"
+  "testedCheckoutSha": "8c7ea390b817d385db2e31d31ab6e6332ba67990",
+  "testedMergeSha": "8c7ea390b817d385db2e31d31ab6e6332ba67990"
 }
 ```
 
-This handoff update is documentation-only and therefore creates a newer branch head. Before later engineering is called current-green, read back that new head and its own PR CI.
+After that verified code checkpoint, `README.md` was documentation-only updated to describe the proven Gemini runtime contract. This handoff update is also documentation-only. Therefore the branch head after this file must receive its own CI readback before any later work is called current-green.
 
-## Closed P0s
+---
 
-### Authenticated consent production HTTP E2E
+# Closed P0 — Gemini / manifest truth
 
-The canonical verifier executes `scripts/verify-consent-http-e2e.mjs` through `npm run verify:ci` against the real built production server.
+Canonical runtime contract:
 
-The E2E proves:
+```text
+provider: google-genai (@google/genai)
+model:    gemini-3.6-flash
+```
 
-1. mission reaches pending consent;
-2. unauthenticated response is rejected;
-3. invalid operator credentials are rejected;
-4. valid login produces a signed short-lived HttpOnly, SameSite=Strict, Secure session cookie;
-5. operator identity comes from the server-side session;
-6. client identity cannot override it;
-7. human REJECTED is authentic but never execution authorization;
-8. rejection remains `BLOCKED_BY_MISSING_EVIDENCE`;
-9. APPROVED without a real effect executor still cannot create false success.
+Only the real LLM-backed roles advertise Gemini:
 
-### Consent decision authenticity
+- `orchestrator` -> `gemini-3.6-flash`
+- `scout` -> `gemini-3.6-flash`
 
-`ConsentEngine` separates:
+The other six core roles are explicitly:
 
-- `validateDecisionForOperation()` — verifies an engine-issued APPROVED or REJECTED decision for exactly one operation;
-- `validateGrantForOperation()` — execution permission and therefore APPROVED-only.
+```text
+deterministic-runtime
+```
 
-Forged request IDs and forged operator identities are regression-tested.
+Current eight-role manifest IDs:
 
-### Mission-scoped Judge truth
+```text
+orchestrator
+scout
+builder
+analyst
+sentinel
+auditor
+gatekeeper
+operator
+```
 
-The EvidenceLedger remains globally hash-chained, but final mission truth is evaluated only against evidence/receipts for the exact current mission manifest/revision. A previous mission cannot contaminate a later mission verdict.
+Permission truth is aligned with runtime enforcement:
 
-### CI source-head vs tested-merge identity
+```text
+orchestrator: read, verify
+scout:        read, verify
+builder:      read, write, execute
+analyst:      read, verify
+sentinel:     read, verify
+auditor:      read, verify
+gatekeeper:   read, consent_gate
+operator:     read, write, execute
+```
 
-`prooffleet.ci-revision-receipt.v1` records `sourceHeadSha`, `baseSha`, `testedCheckoutSha` and `testedMergeSha`. Source head and GitHub's synthetic merge commit are never collapsed into one ambiguous `tested_sha`.
+Authority boundaries are explicit:
 
-### Cloud Run runtime PORT compatibility
+- Orchestrator plans; it cannot issue the final truth verdict.
+- Scout may use Gemini for context, but Gemini-only context is explicitly **ungrounded** and cannot manufacture citations.
+- Builder prepares artifacts/work but cannot certify external effects.
+- Analyst computes deterministic metrics and does not manufacture confidence/truth scores.
+- Sentinel checks security/permission surfaces and cannot grant consent.
+- Auditor inspects integrity and cannot replace the Judge.
+- Gatekeeper requests exact-operation consent and cannot execute the operation.
+- Operator executes an approved effect and projects authoritative readback provenance; it cannot judge itself.
+- Independent Judge remains the final non-mutating verdict authority.
 
-The production server honors Cloud Run's injected `PORT`, defaults to 3000 outside managed runtimes, and rejects malformed/out-of-range ports. Canonical CI proves startup on `PORT=3187`.
+Gemini output provenance is now explicit:
 
-### Idempotency / ambiguous-write safety
+- Orchestrator planning narrative is `AGENT_OUTPUT` plus provider/model/output SHA-256.
+- Scout Gemini context is `AGENT_OUTPUT`, `grounded=false`, no invented citations, plus provider/model/output SHA-256.
+- Only a real grounding tool may produce grounded citations.
+- Missing Gemini provider creates an explicitly marked deterministic fallback.
+- A configured provider failure propagates as a real failure instead of silently becoming a fallback success.
 
-- same-operation concurrent calls are deduplicated in-flight;
-- regression: 50 parallel calls -> exactly one apply;
-- readback-before-retry is mandatory for mutating operations;
-- unavailable readback never authorizes a blind write;
-- conflicting operation identity fails closed instead of overwriting;
-- consent/provider failures do not poison the durable idempotency cache;
-- only observed durable success is cached as final.
+Regression family:
 
-## Truth/evidence boundary
+`tests/gemini-model-truth.test.ts`
 
-- no hardcoded truth/consensus scores in the production truth path;
-- internal hashes prove integrity, not external-world truth;
-- independent verifier operates on snapshots;
-- Judge is non-mutating and fail-closed;
-- verdict vocabulary remains `VERIFIED`, `BLOCKED_BY_MISSING_EVIDENCE`, `CONTRADICTED`;
-- runtime-required claims require explicitly allowed authoritative source kinds;
-- proof requirements bind operation identity and revision where required;
-- memory cannot satisfy runtime proof;
-- no runtime mock/fake may satisfy production evidence.
+The suite proves:
 
-## Manual live Google Cloud proof lane — prepared, not executed
+1. canonical model is `gemini-3.6-flash`;
+2. stale `gemini-3.7` runtime/manifest literals are absent;
+3. only Orchestrator + Scout advertise Gemini;
+4. manifest roles and permissions match the enforced fleet;
+5. non-Judge roles do not receive verdict/score authority;
+6. Orchestrator model output is hashed and marked `AGENT_OUTPUT`;
+7. Scout Gemini context remains ungrounded without real sources;
+8. configured provider failures are not hidden by fallback.
 
-Canonical workflow: `.github/workflows/gcp-live-proof.yml`
+Production CI additionally rejects any future `gemini-3.7*` literal under `server/` or `src/` through the `UNSUPPORTED_GEMINI_MODEL` truth guard.
 
-Properties already regression-tested in normal PR CI:
+---
 
-- `workflow_dispatch` only — never `push`/`pull_request`;
-- `permissions: contents: read` + `id-token: write`;
-- Google auth uses `google-github-actions/auth@v3` and Workload Identity Federation;
-- no `credentials_json` or long-lived service-account key path;
-- exact source revision is `${{ github.sha }}`;
-- mutating Firestore proof requires exact input:
-  `I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE`;
-- missing configuration fails before provider mutation;
-- generated `gha-creds-*.json` is ignored by Git and Docker build context;
-- `gcp-live-proof-receipt.json` is artifact output, not source control;
-- live receipt is uploaded as a GitHub Actions artifact.
+# Other closed hardening boundaries
 
-### Cloud Run provenance gate
+## Consent / operator identity
 
-`CloudRunAdapter` now reads the non-secret service environment declaration `PROOFFLEET_SOURCE_REVISION` from the real Cloud Run service metadata.
+- no auto-consent
+- pending consent remains pending until explicit human action
+- exact `OperationSpec` binding
+- signed short-lived HttpOnly operator session
+- identity derived server-side
+- client identity cannot override operator identity
+- intent header required
+- REJECTED decision can be authentic while remaining invalid for execution
+- forged request IDs / forged operator identities rejected
+- production consent HTTP E2E green
+- modal alert-dialog/focus containment/least-destructive focus regression-tested
 
-Evidence includes:
+## Idempotency / ambiguous writes
 
-- service identity / URI;
-- latest ready / created revision when provider returns them;
-- reconciling state;
-- declared `PROOFFLEET_SOURCE_REVISION`;
-- `sourceRevisionMatchesExpected`.
+- same-operation in-flight deduplication
+- regression: 50 concurrent calls -> exactly one apply
+- authoritative readback before mutation/retry
+- unavailable readback never authorizes blind write
+- conflicting existing operation identity never gets overwritten
+- consent/provider failures do not poison durable idempotency cache
+- only readback-observed durable success is cached final
 
-A service existing in GCP is **not enough**. If its declared source revision differs from the workflow source head, the live proof remains `BLOCKED_BY_MISSING_EVIDENCE` and no Firestore proof write is authorized.
+## Evidence / Judge
 
-### Live proof operation
+- hash chain = integrity, not external truth
+- Memory cannot satisfy runtime evidence
+- runtime doubles cannot satisfy production truth
+- final verdict vocabulary restricted to:
+  - `VERIFIED`
+  - `BLOCKED_BY_MISSING_EVIDENCE`
+  - `CONTRADICTED`
+- rejected consent cannot become VERIFIED through integrity alone
+- final Judge input is mission-scoped, while global ledger integrity remains globally chained
+- previous missions cannot contaminate later verdicts
 
-`server/gcp/liveProof.ts` deterministically constructs a revision-bound Firestore operation.
+## CI / reproducibility
 
-The plan binds:
+- committed `package-lock.json`
+- `npm ci` canonical install path
+- canonical `npm run verify:ci`
+- source-head vs synthetic-merge receipt explicit
+- README contains reproducible clone/install/test/start instructions
+- Cloud Run runtime `PORT` contract regression-tested and real CI runtime smoke uses `PORT=3187`
 
-- exact source SHA;
-- workflow run ID;
-- hash of GitHub actor (raw actor not persisted in the operation);
-- Firestore collection;
-- parameters hash;
-- deterministic operation ID.
+---
 
-`scripts/gcp-live-proof.ts` performs:
+# Manual live Google Cloud proof lane — prepared, NOT executed
 
-1. real Cloud Run authoritative readback;
-2. source-revision equality check;
-3. explicit workflow confirmation check;
-4. real Firestore store construction via ADC/WIF credentials;
-5. operation-bound ConsentEngine grant created only from the explicit manual dispatch;
-6. normal `FirestoreOperatorExecutor` path;
-7. authoritative Firestore readback;
-8. hashed machine-readable receipt.
+Workflow:
 
-Receipt outcomes are deliberately `OBSERVED`, `BLOCKED_BY_MISSING_EVIDENCE`, or `CONTRADICTED`. `OBSERVED` here means the provider effects were observed; it does **not** bypass the application's independent Judge or manufacture a `VERIFIED` mission verdict.
+```text
+.github/workflows/gcp-live-proof.yml
+```
 
-## Live GCP configuration still required
+Safety contract already regression-tested in normal PR CI:
 
-No live GCP success is claimed yet.
+- `workflow_dispatch` only
+- never runs on push/pull request
+- `contents: read`
+- `id-token: write`
+- `google-github-actions/auth@v3`
+- Workload Identity Federation / OIDC
+- no long-lived service-account JSON key
+- exact source revision = `${{ github.sha }}`
+- Firestore mutation requires exact manual phrase:
 
-The workflow currently requires these GitHub repository variables, all resolved from the real Google Cloud account rather than guessed:
+```text
+I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE
+```
 
-- `PROOFFLEET_GCP_PROJECT_ID`
-- `PROOFFLEET_GCP_REGION`
-- `PROOFFLEET_GCP_WIF_PROVIDER`
-- `PROOFFLEET_GCP_WIF_SERVICE_ACCOUNT`
-- `PROOFFLEET_CLOUDRUN_SERVICE`
-- `PROOFFLEET_FIRESTORE_COLLECTION`
+Required repository variables:
 
-The Workload Identity Provider must be a full resource name:
+```text
+PROOFFLEET_GCP_PROJECT_ID
+PROOFFLEET_GCP_REGION
+PROOFFLEET_GCP_WIF_PROVIDER
+PROOFFLEET_GCP_WIF_SERVICE_ACCOUNT
+PROOFFLEET_CLOUDRUN_SERVICE
+PROOFFLEET_FIRESTORE_COLLECTION
+```
 
-`projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`
+These real values are still unresolved in this ChatGPT session. Do not guess them.
 
-The service account must be the real WIF-bound service account with only the permissions needed for Cloud Run readback and the selected Firestore proof operation.
+Cloud Run proof requires its configured non-secret:
 
-Because the current ChatGPT session has no direct Google Cloud mutation connector, a one-time owner-side GCP bootstrap may still be required to create/resolve WIF, IAM, Cloud Run and Firestore resources. Do not replace this boundary with a service-account key or invented project metadata.
+```text
+PROOFFLEET_SOURCE_REVISION
+```
 
-## Working method — mandatory continuation pattern
+to equal the exact workflow source SHA before any Firestore proof write is authorized.
 
-### Secure first
+Live runner:
 
-Before switching task/context/tool:
+```text
+scripts/gcp-live-proof.ts
+```
 
-1. push/write one coherent change set to the feature branch;
-2. read exact PR head from GitHub;
-3. confirm `main` did not move unexpectedly;
+Receipt:
+
+```text
+gcp-live-proof-receipt.json
+```
+
+Possible provider observation outcomes:
+
+```text
+OBSERVED
+BLOCKED_BY_MISSING_EVIDENCE
+CONTRADICTED
+```
+
+No live Google Cloud success has been claimed yet.
+
+---
+
+# Devpost state
+
+Devpost project:
+
+```text
+https://devpost.com/software/prooffleet
+```
+
+Repository link registered:
+
+```text
+https://github.com/OuroborosCollective/Prooffleet
+```
+
+Submission remains **not final submitted**.
+
+The reproducible-testing README requirement is now satisfied in the repository and can truthfully be answered **Yes** when the submission fields are finalized.
+
+Still required before final submission:
+
+- actual architecture diagram file (PDF/PPT/PPTX/PNG/JPG/JPEG)
+- real Google Cloud deployment/readback proof
+- exact Cloud Run / Firestore service selections based on actual use
+- real Gemini provider exercise in the deployed demo
+- ~4 minute demo video showing the Google Cloud backend
+- final text write-up / learnings
+- final mandatory submission fields
+
+---
+
+# Working method — keep this exact pattern
+
+Before changing task, tool or context:
+
+1. push/write one coherent change set;
+2. read the exact PR head from GitHub;
+3. confirm `main` did not unexpectedly move;
 4. read remote CI for that exact candidate;
-5. inspect the actual job/log, not only a green badge;
-6. record source-head vs synthetic-merge identity;
-7. update this handoff when a meaningful P0 boundary closes.
-
-### One causal error family at a time
+5. inspect actual jobs/logs, not only a badge;
+6. preserve the distinction between source head and synthetic merge SHA;
+7. update this handoff at meaningful P0 boundaries.
 
 When CI/runtime turns red:
 
-1. fetch exact failing job/log;
-2. identify the first causal family;
+1. fetch the exact failing job/log;
+2. identify the **first causal error family**;
 3. patch only that family;
 4. add a regression that would have failed before the patch;
 5. push;
 6. run/read the same remote lane again;
-7. do not begin unrelated work until that lane is understood.
+7. do not start unrelated work until that lane is understood.
 
-### Evidence before labels
+Never accept `green`, `verified`, `deployed` or `cloud-ready` because a report/string says so.
 
-Never accept `green`, `verified`, `deployed` or `cloud-ready` merely because an internal report/string says so.
+If required provider evidence is unavailable, remain:
 
-Unit adapter tests prove contracts only. Production HTTP smoke proves local built-runtime behavior only. Cloud Run/Firestore claims require real provider readback.
+```text
+BLOCKED_BY_MISSING_EVIDENCE
+```
 
-### Fail closed
+---
 
-If a required provider observation cannot be obtained, remain:
+# Next work — exact order
 
-`BLOCKED_BY_MISSING_EVIDENCE`
+## P0 — verify this documentation head
 
-Never create a fallback success.
+Read new PR head + its GitHub Actions run before calling this checkpoint current-green.
 
-## Next work — exact order
+## P0 — Devpost architecture diagram
 
-### P0 — resolve live Google Cloud identity and WIF
+Build a technical architecture diagram that matches the actual runtime:
 
-1. read the new documentation head + its CI;
-2. resolve the actual AI-Studio-linked GCP project ID/region and Cloud Run service if they exist;
-3. resolve/create WIF provider and WIF-bound service account with minimal IAM;
-4. resolve Firestore collection/database;
-5. set the six GitHub repository variables above;
-6. do **not** run the manual workflow until those identities are independently checked.
+- React/TypeScript frontend
+- Express backend
+- Google GenAI SDK + `gemini-3.6-flash` only into Orchestrator + Scout
+- remaining six deterministic roles
+- explicit Gatekeeper consent
+- Operator -> OperationExecutor -> Firestore
+- Cloud Run authoritative deployment readback
+- evidence/receipt chain
+- independent verifier
+- non-mutating Judge
+- final three verdicts
+- show planned/manual WIF live-proof boundary without falsely claiming it was executed
 
-### P0 — execute the live provider proof
+Render it to an allowed Devpost file format and upload only after inspecting the rendered artifact.
 
-After configuration is known:
+## P0 — resolve real GCP identity / WIF
 
-1. deploy or identify the exact current ProofFleet source revision on Cloud Run;
-2. require `PROOFFLEET_SOURCE_REVISION` on the service to equal the workflow source head;
-3. manually dispatch `ProofFleet Live GCP Proof` with the exact confirmation phrase;
-4. read Cloud Run service/revision from Google API;
+Resolve real:
+
+- project ID
+- region
+- WIF provider resource
+- WIF service account
+- Cloud Run service
+- Firestore collection/database
+
+Then set the six GitHub variables through an authorized owner/GCP surface. Do not replace this with a long-lived JSON key.
+
+## P0 — live provider proof
+
+Only after real identities are independently checked:
+
+1. deploy/identify exact current source on Cloud Run;
+2. verify Cloud Run declares the same source SHA;
+3. manually dispatch the live-proof workflow with exact confirmation phrase;
+4. read Cloud Run provider result;
 5. execute one operation-bound Firestore proof write;
-6. read back the exact Firestore document identity;
-7. download/read the resulting live-proof receipt artifact;
-8. only then project the authoritative observation into application Evidence/Receipt and require the independent Judge to produce `VERIFIED` for the demo mission.
+6. authoritative Firestore readback;
+7. inspect the Actions artifact receipt;
+8. only then connect provider observation to application Evidence/Receipt/Judge.
 
-### P1 — Pub/Sub
+## P1 — Pub/Sub and managed Fortified surfaces
 
-After Cloud Run + Firestore causal proof is stable, bind a real Pub/Sub message/correlation identity into mission evidence.
-
-### P1 — Fortified Enterprise Fleet managed surfaces
-
-Only after the core proof path is stable, add/prove the managed services that materially improve the judged demo: ADK/Agent Runtime, Agent Registry, Memory Bank, Agent Identity/Gateway, Model Armor and OpenTelemetry/Observability.
+After Cloud Run + Firestore causal proof is stable, add/prove only the managed surfaces that materially improve judging: Pub/Sub, ADK/Agent Runtime, Registry, Memory Bank, Identity/Gateway, Model Armor, OpenTelemetry/Observability.
 
 No managed-service claim without provision + readback.
 
-## Devpost state
+---
 
-Devpost project exists as `ProofFleet` at `https://devpost.com/software/prooffleet` and the code-repository link is registered as `https://github.com/OuroborosCollective/Prooffleet`.
-
-Do **not** final-submit yet. Required claims about Google Cloud services, model, architecture diagram and demo video must reflect the final evidenced implementation.
-
-## Merge rule
+# Merge rule
 
 Keep PR #1 Draft until at minimum:
 
-- current branch head has green immutable-lock CI;
-- authenticated consent production HTTP E2E is green;
-- source-head/tested-merge identities are unambiguous;
-- managed runtime PORT is proven;
+- current head has green immutable-lock CI;
+- Gemini model/manifest truth remains green;
+- authenticated consent production E2E remains green;
+- source/tested revision identities remain unambiguous;
 - at least one real Google Cloud mutating effect is proven by authoritative readback;
 - no production truth path uses mocks/fakes;
-- final demo visibly traces mission -> operation -> consent -> effect -> readback -> evidence -> Judge.
+- final demo can visibly trace:
 
-Do not merge `main` merely because local/unit architecture is strong.
+```text
+mission -> agent work -> consent -> effect -> readback -> evidence -> independent verification -> Judge
+```
 
-## Resume instruction
-
-On resume:
-
-1. read PR metadata/current head;
-2. read latest workflow run/jobs/log;
-3. read this handoff;
-4. read the files/tests for the next P0;
-5. state the exact source revision and current runtime evidence;
-6. make one causal change;
-7. regression-test, push and read back remote evidence before proceeding.
+Do not merge `main` merely because the local/unit architecture is strong.
