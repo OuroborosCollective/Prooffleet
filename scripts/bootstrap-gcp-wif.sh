@@ -19,6 +19,8 @@ PROVIDER_ID="prooffleet-repo"
 SERVICE_ACCOUNT_ID="prooffleet-github"
 COLLECTION="prooffleet-live-proofs"
 PROJECT_ID=""
+PROJECT_NUMBER_INPUT=""
+PROJECT_NUMBER=""
 REGION=""
 CLOUD_RUN_SERVICE=""
 APPLY=false
@@ -27,7 +29,7 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/bootstrap-gcp-wif.sh \
-    --project-id <gcp-project-id> \
+    (--project-id <gcp-project-id> | --project-number <numeric-project-number>) \
     --region <cloud-run-region> \
     --cloud-run-service <service-name> \
     [--collection <firestore-collection>] \
@@ -35,7 +37,8 @@ Usage:
 
 Without --apply the script performs read-only discovery and prints the exact
 resources it would create. It never creates or uses a long-lived service-account
-JSON key.
+JSON key. Project number input is resolved back to the canonical Google Cloud
+project ID before any IAM or resource command is planned or applied.
 EOF
 }
 
@@ -43,6 +46,8 @@ while (($#)); do
   case "$1" in
     --project-id)
       PROJECT_ID="${2:-}"; shift 2 ;;
+    --project-number)
+      PROJECT_NUMBER_INPUT="${2:-}"; shift 2 ;;
     --region)
       REGION="${2:-}"; shift 2 ;;
     --cloud-run-service)
@@ -60,14 +65,23 @@ while (($#)); do
   esac
 done
 
-if [[ -z "$PROJECT_ID" || -z "$REGION" || -z "$CLOUD_RUN_SERVICE" ]]; then
-  echo "--project-id, --region and --cloud-run-service are required." >&2
+if [[ -z "$PROJECT_ID" && -z "$PROJECT_NUMBER_INPUT" ]]; then
+  echo "One of --project-id or --project-number is required." >&2
+  usage >&2
+  exit 2
+fi
+if [[ -z "$REGION" || -z "$CLOUD_RUN_SERVICE" ]]; then
+  echo "--region and --cloud-run-service are required." >&2
   usage >&2
   exit 2
 fi
 
-if [[ ! "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
   echo "Malformed Google Cloud project ID: $PROJECT_ID" >&2
+  exit 2
+fi
+if [[ -n "$PROJECT_NUMBER_INPUT" && ! "$PROJECT_NUMBER_INPUT" =~ ^[0-9]+$ ]]; then
+  echo "Malformed Google Cloud project number: $PROJECT_NUMBER_INPUT" >&2
   exit 2
 fi
 if [[ ! "$REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]]; then
@@ -88,11 +102,29 @@ command -v gcloud >/dev/null 2>&1 || {
   exit 2
 }
 
-PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
-if [[ ! "$PROJECT_NUMBER" =~ ^[0-9]+$ ]]; then
-  echo "Could not resolve a numeric project number for $PROJECT_ID." >&2
+PROJECT_LOOKUP="${PROJECT_ID:-$PROJECT_NUMBER_INPUT}"
+RESOLVED_PROJECT_ID="$(gcloud projects describe "$PROJECT_LOOKUP" --format='value(projectId)')"
+RESOLVED_PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_LOOKUP" --format='value(projectNumber)')"
+
+if [[ ! "$RESOLVED_PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+  echo "Could not resolve a canonical project ID from '$PROJECT_LOOKUP'." >&2
   exit 2
 fi
+if [[ ! "$RESOLVED_PROJECT_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "Could not resolve a numeric project number from '$PROJECT_LOOKUP'." >&2
+  exit 2
+fi
+if [[ -n "$PROJECT_ID" && "$PROJECT_ID" != "$RESOLVED_PROJECT_ID" ]]; then
+  echo "Supplied project ID does not match Google Cloud readback: $PROJECT_ID != $RESOLVED_PROJECT_ID" >&2
+  exit 3
+fi
+if [[ -n "$PROJECT_NUMBER_INPUT" && "$PROJECT_NUMBER_INPUT" != "$RESOLVED_PROJECT_NUMBER" ]]; then
+  echo "Supplied project number does not match Google Cloud readback: $PROJECT_NUMBER_INPUT != $RESOLVED_PROJECT_NUMBER" >&2
+  exit 3
+fi
+
+PROJECT_ID="$RESOLVED_PROJECT_ID"
+PROJECT_NUMBER="$RESOLVED_PROJECT_NUMBER"
 
 SA_EMAIL="${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 POOL_NAME="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}"
@@ -188,12 +220,18 @@ for role in roles/run.viewer roles/datastore.user; do
     --member="serviceAccount:${SA_EMAIL}" \
     --role="$role" \
     --condition=None
- done
+done
 
 # These are read-only provider preflights. We intentionally do not create a
 # Firestore database because its location choice should be explicit.
 if gcloud firestore databases describe --database='(default)' --project="$PROJECT_ID" >/dev/null 2>&1; then
-  log "Firestore default database exists"
+  FIRESTORE_LOCATION="$(gcloud firestore databases describe --database='(default)' \
+    --project="$PROJECT_ID" --format='value(locationId)')"
+  if [[ -z "$FIRESTORE_LOCATION" ]]; then
+    echo "Firestore default database exists, but its locationId could not be read." >&2
+    exit 4
+  fi
+  log "Firestore default database exists: location=$FIRESTORE_LOCATION"
 else
   echo "Firestore default database is missing. Create it explicitly in the intended location before live proof." >&2
   exit 4
