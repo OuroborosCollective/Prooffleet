@@ -29,7 +29,7 @@ flowchart LR
     U[Human Operator] --> UI[React / TypeScript UI]
     UI --> API[Express Runtime]
 
-    GM[Google GenAI SDK\ngemini-3.6-flash] --> O[Orchestrator]
+    GM[Google GenAI SDK\ngemini-3.7-flash] --> O[Orchestrator]
     GM --> S[Scout]
 
     API --> O
@@ -176,7 +176,7 @@ The canonical ProofFleet LLM contract is:
 
 ```text
 provider: google-genai (@google/genai)
-model:    gemini-3.6-flash
+model:    gemini-3.7-flash
 ```
 
 Only the **Orchestrator** and **Scout** receive the Gemini provider in the real fleet runtime. The other six core roles are declared as `deterministic-runtime` because they do not make Gemini calls.
