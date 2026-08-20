@@ -430,10 +430,27 @@ export class FleetRunner {
             },
           ];
 
+    // The ledger is intentionally global and hash-chained across missions. The
+    // current mission's truth verdict, however, must never be influenced by a
+    // previous mission that happened to use the same claim text. Scope the
+    // Judge input to this exact mission manifest/revision while leaving global
+    // chain integrity verification above untouched.
+    const missionEvidence = this.ledger.getChain().filter(
+      (block) =>
+        block.manifestHash === manifestHash &&
+        block.missionRevision === missionRevision
+    );
+    const missionReceipts = this.receipts.exportReceipts().filter(
+      (receipt) =>
+        receipt.manifestHash === manifestHash &&
+        receipt.missionId === mission.id &&
+        receipt.missionRevision === missionRevision
+    );
+
     const judgeVerdict: VerdictRecord = Judge.judge(
       FINALIZE_CLAIM,
-      this.ledger.getChain(),
-      this.receipts.exportReceipts(),
+      missionEvidence,
+      missionReceipts,
       proofRequirements
     );
 
