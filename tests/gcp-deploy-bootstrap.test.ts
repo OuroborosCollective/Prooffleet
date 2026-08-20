@@ -22,7 +22,7 @@ describe('GCP deploy bootstrap safety contract', () => {
     expect(source).toContain('DEPLOY_SA_EMAIL="${DEPLOY_SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com"');
     expect(source).toContain('RUNTIME_SA="$(gcloud run services describe');
     expect(source).toContain('Refusing identity collapse: deployment and runtime service accounts must be distinct.');
-    expect(source).not.toContain('compute@developer.gserviceaccount.com');
+    expect(source).not.toContain('511695074775-compute@developer.gserviceaccount.com');
   });
 
   it('restricts GitHub OIDC admission to exactly the ProofFleet repository', () => {
@@ -69,6 +69,11 @@ describe('GCP deploy bootstrap safety contract', () => {
     expect(source).not.toContain('CLOUD_RUN_SERVICE="prooffleet"');
   });
 
+  it('accepts a provider-observed Google default Compute Engine service account', () => {
+    expect(source).toContain('\\.gserviceaccount\\.com$');
+    expect(source).not.toContain('\\.iam\\.gserviceaccount\\.com$');
+  });
+
   it('executes only provider readbacks in default dry-run while printing mutations as plans', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'prooffleet-gcp-deploy-'));
     const fakeGcloud = join(sandbox, 'gcloud');
@@ -95,7 +100,7 @@ fi
 if [[ "\${1:-}" == "run" && "\${2:-}" == "services" && "\${3:-}" == "describe" ]]; then
   for arg in "$@"; do
     if [[ "$arg" == '--format=value(spec.template.spec.serviceAccountName)' ]]; then
-      echo 'runtime@proofleet-test-12345.iam.gserviceaccount.com'
+      echo '123456789012-compute@developer.gserviceaccount.com'
       exit 0
     fi
   done
@@ -149,6 +154,7 @@ exit 99
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain('[proofleet-deploy] mode=dry-run');
+      expect(result.stdout).toContain('[proofleet-deploy] runtime_service_account=123456789012-compute@developer.gserviceaccount.com');
       expect(result.stdout).toContain('[dry-run] gcloud services enable');
       expect(result.stdout).toContain('roles/artifactregistry.writer');
       expect(result.stdout).toContain('roles/run.developer');
