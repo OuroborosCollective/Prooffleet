@@ -76,10 +76,12 @@ async function runtimeSmoke() {
     env: {
       ...process.env,
       NODE_ENV: 'production',
+      GEMINI_API_KEY: '',
       PROOFFLEET_OPERATOR_TOKEN: '',
       PROOFFLEET_SESSION_SECRET: '',
       GCP_PROJECT_ID: '',
       PROOFFLEET_FIRESTORE_COLLECTION: '',
+      PROOFFLEET_SOURCE_REVISION: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -181,6 +183,7 @@ async function main() {
   truthGuard();
   run('npm', ['run', 'build'], 'production build');
   await runtimeSmoke();
+  run(process.execPath, ['scripts/verify-consent-http-e2e.mjs'], 'authenticated consent production HTTP E2E');
   console.log('\n[verify-ci] VERIFIED_LOCAL_CHAIN');
 }
 
