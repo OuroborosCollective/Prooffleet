@@ -208,8 +208,12 @@ export async function createFirestoreOperatorExecutor(
   env: FirestoreEffectEnvironment,
   grantValidator?: GrantValidator,
 ): Promise<FirestoreOperatorExecutor | undefined> {
+  // Runtime proof is revision-bound. If the deployment did not inject the
+  // exact immutable source revision, the real effect path remains unavailable.
+  const sourceRevision = env.PROOFFLEET_SOURCE_REVISION?.trim();
+  if (!sourceRevision) return undefined;
+
   const store = await createRealFirestoreEffectStore(env);
   if (!store) return undefined;
-  const sourceRevision = env.PROOFFLEET_SOURCE_REVISION?.trim() || null;
   return new FirestoreOperatorExecutor(store, sourceRevision, grantValidator);
 }
