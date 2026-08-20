@@ -5,7 +5,7 @@ import { GoogleGenAI } from "@google/genai";
  * Keep this in one place so UI/manifest/runtime cannot silently drift.
  */
 export const PROOFFLEET_GEMINI_PROVIDER = "google-genai" as const;
-export const PROOFFLEET_GEMINI_MODEL = "gemini-3.6-flash" as const;
+export const PROOFFLEET_GEMINI_MODEL = "gemini-3.7-flash" as const;
 
 let genAIInstance: GoogleGenAI | null = null;
 
