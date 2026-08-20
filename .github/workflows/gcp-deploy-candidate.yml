@@ -1,0 +1,236 @@
+name: ProofFleet GCP Candidate Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_revision:
+        description: Exact 40-character source SHA selected for this candidate deploy.
+        required: true
+        type: string
+      confirmation:
+        description: Type I_APPROVE_PROOFFLEET_CANDIDATE_DEPLOY to create one no-traffic Cloud Run candidate revision.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: prooffleet-gcp-candidate-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-candidate:
+    name: deploy-candidate-no-traffic
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      GCP_PROJECT_ID: ${{ vars.PROOFFLEET_GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.PROOFFLEET_GCP_REGION }}
+      GCP_WIF_PROVIDER: ${{ vars.PROOFFLEET_GCP_WIF_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.PROOFFLEET_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      PROOFFLEET_CLOUDRUN_SERVICE: ${{ vars.PROOFFLEET_CLOUDRUN_SERVICE }}
+      PROOFFLEET_ARTIFACT_REPOSITORY: ${{ vars.PROOFFLEET_ARTIFACT_REPOSITORY }}
+      EXPECTED_SOURCE_REVISION: ${{ inputs.expected_source_revision }}
+      DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
+
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Fail closed on stale source or missing deployment identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GCP_WIF_PROVIDER
+            GCP_DEPLOY_SERVICE_ACCOUNT
+            PROOFFLEET_CLOUDRUN_SERVICE
+            PROOFFLEET_ARTIFACT_REPOSITORY
+            EXPECTED_SOURCE_REVISION
+          )
+          for key in "${required[@]}"; do
+            if test -z "${!key:-}"; then
+              echo "Missing required deployment value: ${key}" >&2
+              exit 2
+            fi
+          done
+          if ! printf '%s' "$EXPECTED_SOURCE_REVISION" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo 'expected_source_revision must be an exact lowercase 40-character Git SHA.' >&2
+            exit 2
+          fi
+          if test "$EXPECTED_SOURCE_REVISION" != "$GITHUB_SHA"; then
+            echo "Refusing stale deploy: expected_source_revision=$EXPECTED_SOURCE_REVISION github.sha=$GITHUB_SHA" >&2
+            exit 2
+          fi
+          if test "$DEPLOY_CONFIRMATION" != 'I_APPROVE_PROOFFLEET_CANDIDATE_DEPLOY'; then
+            echo 'Exact candidate-deploy confirmation phrase is required.' >&2
+            exit 2
+          fi
+          if ! printf '%s' "$GCP_WIF_PROVIDER" | grep -Eq '^projects/[0-9]+/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'; then
+            echo 'GCP_WIF_PROVIDER is malformed.' >&2
+            exit 2
+          fi
+          if ! printf '%s' "$GCP_DEPLOY_SERVICE_ACCOUNT" | grep -Eq '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$'; then
+            echo 'GCP_DEPLOY_SERVICE_ACCOUNT is malformed.' >&2
+            exit 2
+          fi
+
+      - name: Authenticate to Google Cloud using WIF
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Snapshot existing service identity without reading secret values
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_SA="$(gcloud run services describe "$PROOFFLEET_CLOUDRUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" \
+            --format='value(spec.template.spec.serviceAccountName)')"
+          if test -z "$RUNTIME_SA"; then
+            echo 'Existing Cloud Run runtime service account could not be read.' >&2
+            exit 2
+          fi
+          printf '%s\n' "$RUNTIME_SA" > "$RUNNER_TEMP/runtime-sa-before.txt"
+          gcloud run services describe "$PROOFFLEET_CLOUDRUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" \
+            --format='value(spec.template.spec.containers[0].env.name)' \
+            | tr ';' '\n' | sed '/^$/d' | sort -u > "$RUNNER_TEMP/env-names-before.txt"
+          echo "runtime_service_account=$RUNTIME_SA"
+
+      - name: Authenticate Docker to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push immutable candidate image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.PROOFFLEET_ARTIFACT_REPOSITORY }}/${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}:${{ github.sha }}
+          provenance: mode=max
+
+      - name: Require immutable image digest
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Build did not return an immutable sha256 digest: $IMAGE_DIGEST" >&2
+            exit 2
+          fi
+          echo "image_digest=$IMAGE_DIGEST"
+
+      - name: Deploy candidate revision with zero traffic
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: ${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}
+          region: ${{ env.GCP_REGION }}
+          image: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.PROOFFLEET_ARTIFACT_REPOSITORY }}/${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}@${{ steps.build.outputs.digest }}
+          no_traffic: true
+          env_vars: |-
+            PROOFFLEET_SOURCE_REVISION=${{ github.sha }}
+          env_vars_update_strategy: merge
+          labels: |-
+            prooffleet-source-sha=${{ github.sha }}
+            prooffleet-candidate=true
+
+      - name: Authoritative candidate revision readback
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$RUNNER_TEMP/cloudrun-service.json"
+          REVISION_JSON="$RUNNER_TEMP/cloudrun-revision.json"
+
+          gcloud run services describe "$PROOFFLEET_CLOUDRUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$SERVICE_JSON"
+
+          REVISION="$(node -e "const s=require(process.argv[1]);process.stdout.write(s.status?.latestCreatedRevisionName||'')" "$SERVICE_JSON")"
+          if test -z "$REVISION"; then
+            echo 'Cloud Run did not report latestCreatedRevisionName.' >&2
+            exit 2
+          fi
+
+          gcloud run revisions describe "$REVISION" \
+            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$REVISION_JSON"
+
+          node - "$SERVICE_JSON" "$REVISION_JSON" "$RUNNER_TEMP/runtime-sa-before.txt" "$RUNNER_TEMP/env-names-before.txt" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" <<'NODE'
+          const fs = require('fs');
+          const [servicePath, revisionPath, runtimeSaPath, envNamesPath, expectedSha, expectedDigest] = process.argv.slice(2);
+          const service = JSON.parse(fs.readFileSync(servicePath, 'utf8'));
+          const revision = JSON.parse(fs.readFileSync(revisionPath, 'utf8'));
+          const runtimeBefore = fs.readFileSync(runtimeSaPath, 'utf8').trim();
+          const envBefore = fs.readFileSync(envNamesPath, 'utf8').split(/\r?\n/).filter(Boolean);
+          const runtimeAfter = revision.spec?.serviceAccountName || revision.spec?.template?.spec?.serviceAccountName || '';
+          if (!runtimeAfter || runtimeAfter !== runtimeBefore) throw new Error(`runtime service account changed: ${runtimeBefore} -> ${runtimeAfter}`);
+
+          const container = revision.spec?.containers?.[0] || revision.spec?.template?.spec?.containers?.[0] || {};
+          const env = Array.isArray(container.env) ? container.env : [];
+          const source = env.find((e) => e.name === 'PROOFFLEET_SOURCE_REVISION')?.value || '';
+          if (source !== expectedSha) throw new Error(`source revision mismatch: expected ${expectedSha}, got ${source || '<missing>'}`);
+          const envAfterNames = new Set(env.map((e) => e.name).filter(Boolean));
+          for (const name of envBefore) {
+            if (!envAfterNames.has(name)) throw new Error(`upstream environment variable disappeared during merge deploy: ${name}`);
+          }
+
+          const image = String(container.image || '');
+          if (!image.includes(`@${expectedDigest}`)) throw new Error(`revision image is not bound to expected digest ${expectedDigest}: ${image}`);
+
+          const traffic = Array.isArray(service.status?.traffic) ? service.status.traffic : [];
+          const percent = traffic.filter((t) => t.revisionName === revision.metadata?.name).reduce((sum, t) => sum + Number(t.percent || 0), 0);
+          if (percent !== 0) throw new Error(`candidate revision unexpectedly receives ${percent}% traffic`);
+
+          const receipt = {
+            schemaVersion: 'prooffleet.gcp-deploy-candidate.v1',
+            outcome: 'OBSERVED_NO_TRAFFIC_CANDIDATE',
+            projectId: process.env.GCP_PROJECT_ID,
+            region: process.env.GCP_REGION,
+            service: process.env.PROOFFLEET_CLOUDRUN_SERVICE,
+            sourceRevision: expectedSha,
+            revisionName: revision.metadata?.name || null,
+            imageDigest: expectedDigest,
+            runtimeServiceAccount: runtimeAfter,
+            priorEnvironmentNamesPreserved: true,
+            trafficPercent: percent,
+            observedAt: new Date().toISOString(),
+          };
+          fs.writeFileSync('gcp-deploy-candidate-receipt.json', JSON.stringify(receipt, null, 2) + '\n');
+          console.log(JSON.stringify(receipt, null, 2));
+          NODE
+
+      - name: Upload candidate deployment receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: prooffleet-gcp-deploy-candidate-${{ github.sha }}
+          path: gcp-deploy-candidate-receipt.json
+          if-no-files-found: error
+          retention-days: 30
