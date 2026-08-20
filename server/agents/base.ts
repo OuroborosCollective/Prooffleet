@@ -39,10 +39,19 @@ export interface FleetAgent {
 
 /** Optionales LLM-Provider-Interface. Ohne Provider: ehrlicher, markierter Fallback. */
 export interface LlmProvider {
+  readonly providerName: string;
+  readonly modelId: string;
   generate(prompt: string): Promise<string>;
 }
 
 export const FALLBACK_MARKER = 'deterministic_fallback' as const;
+
+export interface GeneratedText {
+  text: string;
+  source: 'llm' | typeof FALLBACK_MARKER;
+  providerName: string | null;
+  modelId: string | null;
+}
 
 /**
  * Laufzeit-Guard: erzwingt, dass eine Rolle eine Permission besitzt.
@@ -61,10 +70,20 @@ export async function generateHonest(
   provider: LlmProvider | undefined,
   prompt: string,
   deterministicFallback: string,
-): Promise<{ text: string; source: 'llm' | typeof FALLBACK_MARKER }> {
+): Promise<GeneratedText> {
   if (provider) {
     const text = await provider.generate(prompt);
-    return { text, source: 'llm' };
+    return {
+      text,
+      source: 'llm',
+      providerName: provider.providerName,
+      modelId: provider.modelId,
+    };
   }
-  return { text: deterministicFallback, source: FALLBACK_MARKER };
+  return {
+    text: deterministicFallback,
+    source: FALLBACK_MARKER,
+    providerName: null,
+    modelId: null,
+  };
 }
