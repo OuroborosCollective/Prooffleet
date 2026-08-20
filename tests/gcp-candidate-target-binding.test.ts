@@ -20,6 +20,13 @@ describe('GCP candidate deployment target binding', () => {
     expect(workflow).not.toContain('vars.PROOFFLEET_');
   });
 
+  it('binds pull-request action explicitly instead of assuming a shell GITHUB_EVENT_ACTION variable', () => {
+    expect(workflow).toContain('EVENT_ACTION: ${{ github.event.action }}');
+    expect(workflow).toContain('test "${EVENT_ACTION:-}" != \'labeled\'');
+    expect(workflow).toContain('got action=${EVENT_ACTION:-<missing>}');
+    expect(workflow).not.toContain('GITHUB_EVENT_ACTION');
+  });
+
   it('retains WIF-only authentication and zero-traffic deployment semantics', () => {
     expect(workflow).toContain('google-github-actions/auth@v3');
     expect(workflow).toContain('workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}');
