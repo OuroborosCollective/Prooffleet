@@ -70,12 +70,15 @@ async function fetchJson(url, options) {
 }
 
 async function runtimeSmoke() {
-  console.log('\n[verify-ci] production runtime HTTP smoke');
+  const smokePort = 3187;
+  const smokeBaseUrl = `http://127.0.0.1:${smokePort}`;
+  console.log(`\n[verify-ci] production runtime HTTP smoke on injected PORT=${smokePort}`);
   const child = spawn(process.execPath, ['dist/server.cjs'], {
     cwd: root,
     env: {
       ...process.env,
       NODE_ENV: 'production',
+      PORT: String(smokePort),
       GEMINI_API_KEY: '',
       PROOFFLEET_OPERATOR_TOKEN: '',
       PROOFFLEET_SESSION_SECRET: '',
@@ -94,7 +97,7 @@ async function runtimeSmoke() {
     let healthy = false;
     for (let attempt = 0; attempt < 40; attempt += 1) {
       try {
-        const response = await fetch('http://127.0.0.1:3000/api/health');
+        const response = await fetch(`${smokeBaseUrl}/api/health`);
         if (response.ok) {
           healthy = true;
           break;
@@ -104,9 +107,12 @@ async function runtimeSmoke() {
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    if (!healthy) throw new Error(`server did not become healthy\n${logs}`);
+    if (!healthy) throw new Error(`server did not become healthy on injected PORT=${smokePort}\n${logs}`);
+    if (!logs.includes(`0.0.0.0:${smokePort}`)) {
+      throw new Error(`server startup log does not confirm injected PORT=${smokePort}\n${logs}`);
+    }
 
-    const health = await fetchJson('http://127.0.0.1:3000/api/health');
+    const health = await fetchJson(`${smokeBaseUrl}/api/health`);
     if (!health.response.ok || health.body?.status !== 'ok') {
       throw new Error('health contract failed');
     }
@@ -114,12 +120,12 @@ async function runtimeSmoke() {
       throw new Error(`health expected 8 agents, got ${health.body?.agentCount}`);
     }
 
-    const agents = await fetchJson('http://127.0.0.1:3000/api/agents');
+    const agents = await fetchJson(`${smokeBaseUrl}/api/agents`);
     if (!agents.response.ok || !Array.isArray(agents.body?.agents) || agents.body.agents.length !== 8) {
       throw new Error('runtime agent manifest contract failed');
     }
 
-    const integrations = await fetchJson('http://127.0.0.1:3000/api/integrations/status');
+    const integrations = await fetchJson(`${smokeBaseUrl}/api/integrations/status`);
     if (!integrations.response.ok || !Array.isArray(integrations.body?.integrations)) {
       throw new Error('integration status endpoint contract failed');
     }
@@ -130,7 +136,7 @@ async function runtimeSmoke() {
       }
     }
 
-    const telemetry = await fetchJson('http://127.0.0.1:3000/api/telemetry');
+    const telemetry = await fetchJson(`${smokeBaseUrl}/api/telemetry`);
     if (!telemetry.response.ok || telemetry.body?.activeAgentsCount !== 8) {
       throw new Error('telemetry agent count contract failed');
     }
@@ -138,12 +144,12 @@ async function runtimeSmoke() {
       throw new Error('telemetry chain integrity contract missing');
     }
 
-    const operator = await fetchJson('http://127.0.0.1:3000/api/operator/session');
+    const operator = await fetchJson(`${smokeBaseUrl}/api/operator/session`);
     if (!operator.response.ok || operator.body?.configured !== false || operator.body?.authenticated !== false) {
       throw new Error('unprovisioned operator auth must report fail-closed state');
     }
 
-    const consentNoIntent = await fetchJson('http://127.0.0.1:3000/api/consent/respond', {
+    const consentNoIntent = await fetchJson(`${smokeBaseUrl}/api/consent/respond`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ requestId: 'missing', decision: 'APPROVED' }),
@@ -152,7 +158,7 @@ async function runtimeSmoke() {
       throw new Error(`consent without intent header expected 403, got ${consentNoIntent.response.status}`);
     }
 
-    const consentNoAuth = await fetchJson('http://127.0.0.1:3000/api/consent/respond', {
+    const consentNoAuth = await fetchJson(`${smokeBaseUrl}/api/consent/respond`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -164,7 +170,7 @@ async function runtimeSmoke() {
       throw new Error(`unprovisioned consent auth expected 503, got ${consentNoAuth.response.status}`);
     }
 
-    console.log('[verify-ci] runtime HTTP smoke passed');
+    console.log('[verify-ci] runtime HTTP smoke passed on injected PORT');
   } finally {
     child.kill('SIGTERM');
     await new Promise((resolve) => {
