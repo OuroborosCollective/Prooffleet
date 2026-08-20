@@ -7,10 +7,11 @@ import { Judge, IndependentVerifier } from "./server/evidence/index";
 import { createGcpAdapters } from "./server/adapters/gcp/index";
 import type { ConsentGrant } from "./src/types/index";
 import { OperatorSessionManager } from "./server/security/operatorSession";
+import { resolveRuntimePort } from "./server/runtimePort";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = resolveRuntimePort(process.env.PORT);
 
   app.use(express.json());
 
