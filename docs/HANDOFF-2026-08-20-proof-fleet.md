@@ -1,43 +1,44 @@
 # ProofFleet Engineering Handoff — 2026-08-20
 
-Status: **clean checkpoint / new-chat handoff recommended**
+Status: **active checkpoint / continue current engineering loop**
 
 Repository: `OuroborosCollective/Prooffleet`  
 Branch: `hardening/fortified-fleet`  
 PR: `#1 Hardening: evidence-first fortified fleet` — **Draft**  
 Base `main`: `89302dfbe1ef732ff3962b47ce914a7e299f5075`  
-Current verified source head: `6d7f88eff49b84792dc8d38b5e6e666b25ecc271`  
-Synthetic merge SHA tested by GitHub: `6412faee540e0493e5ff99c760b83651a670e222`  
-GitHub Actions run: `32330118293` / run number `111`
+Current verified source head: `1cbe81eebabd1878e7197a2e9e83c868936398d0`  
+Synthetic merge SHA tested by GitHub: `5c292002061e50d998a3fc9754e5231d4ef37705`  
+GitHub Actions run: `32412592933` / run number `159`
 
 Hackathon: **Google All Things Agentic Hackathon**  
 Target track: **Fortified Enterprise Fleet**  
-Submission deadline: **2026-09-01 02:00 Europe/Berlin**  
-Devpost project: `https://devpost.com/software/prooffleet`
+Submission deadline: **2026-09-01 02:00 Europe/Berlin**
 
 ---
 
-# 1. Exact verified checkpoint
+# 1. Exact current verified checkpoint
 
-GitHub Actions run #111 completed successfully for source head:
+GitHub Actions run #159 completed successfully for source head:
 
 ```text
-6d7f88eff49b84792dc8d38b5e6e666b25ecc271
+1cbe81eebabd1878e7197a2e9e83c868936398d0
 ```
 
 Remote evidence from the same run:
 
 - immutable install through `npm ci`
 - TypeScript `tsc --noEmit` passed
-- **24 test files passed**
-- **99 tests passed**
+- **27 test files passed**
+- **123 tests passed**
 - production truth guards passed
 - Vite + esbuild production build passed
-- built production server HTTP smoke passed on injected `PORT=3187`
+- production server HTTP smoke passed on injected port
 - authenticated production consent HTTP E2E passed
+- exact Docker image built from `Dockerfile`
+- exact Docker image started with Cloud Run `PORT=8080`
+- `/api/health` read successfully from that container
 - high/critical dependency audit passed
-- package-lock bootstrap skipped because the committed lock already exists
-- source-head and GitHub synthetic merge identities are kept distinct
+- source-head and GitHub synthetic merge identities remain distinct
 
 Exact CI revision receipt:
 
@@ -45,88 +46,31 @@ Exact CI revision receipt:
 {
   "schemaVersion": "prooffleet.ci-revision-receipt.v1",
   "eventName": "pull_request",
-  "sourceHeadSha": "6d7f88eff49b84792dc8d38b5e6e666b25ecc271",
+  "sourceHeadSha": "1cbe81eebabd1878e7197a2e9e83c868936398d0",
   "baseSha": "89302dfbe1ef732ff3962b47ce914a7e299f5075",
-  "testedCheckoutSha": "6412faee540e0493e5ff99c760b83651a670e222",
-  "testedMergeSha": "6412faee540e0493e5ff99c760b83651a670e222"
+  "testedCheckoutSha": "5c292002061e50d998a3fc9754e5231d4ef37705",
+  "testedMergeSha": "5c292002061e50d998a3fc9754e5231d4ef37705"
 }
 ```
 
-Do not call any later commit current-green until its own PR head and Actions log have been read back.
+Do not call a later commit current-green until its own PR head and Actions log have been read back.
 
 ---
 
-# 2. CRITICAL OPEN CORRECTION — Gemini model identity
+# 2. Current product truth
 
-This is the **first task in the new chat before any other feature work**.
-
-During this session the runtime originally used:
-
-```text
-gemini-3.7-flash
-```
-
-It was changed to:
-
-```text
-gemini-3.6-flash
-```
-
-because the assistant incorrectly concluded that 3.7 was unsupported.
-
-After that change, a fresh connected Gmail read found an official Google AI Studio message dated **2026-08-14** with subject:
-
-```text
-Introducing Gemini 3.7 Flash in the Gemini API
-```
-
-The assistant then rechecked current Google information and concluded the earlier downgrade was wrong.
-
-Therefore:
-
-> **Do not treat the current 3.6 model restriction as final product truth merely because CI is green.**
-
-The new chat must first independently re-check current official Google documentation for the exact supported model ID and hackathon eligibility, then — if confirmed — restore `gemini-3.7-flash` consistently across runtime, manifest, tests, truth guards, README and architecture source.
-
-Current files that intentionally need review/correction:
-
-```text
-server/gemini.ts
-server/contracts.ts
-server/fleetRunner.ts
-tests/gemini-model-truth.test.ts
-scripts/verify-ci.mjs
-README.md
-docs/architecture.mmd
-```
-
-Important: preserve the **good architectural hardening** created during the mistaken model change:
-
-- only Orchestrator and Scout advertise/use Gemini;
-- the other six roles remain `deterministic-runtime` unless real code later changes that;
-- Orchestrator cannot issue final truth verdicts;
-- Scout Gemini context without a grounding tool remains `grounded=false` with no invented citations;
-- Gemini output is `AGENT_OUTPUT`, not authoritative runtime evidence;
-- model/provider/output hash provenance remains attached;
-- configured model/provider failures must propagate honestly instead of being disguised as deterministic fallback.
-
-The problem is the exact model ID / unsupported-3.7 guard, not these authority boundaries.
-
----
-
-# 3. Project goal
-
-ProofFleet is an **evidence-first multi-agent control loop** for autonomous engineering/enterprise-agent actions.
+ProofFleet is an evidence-first multi-agent control loop for autonomous engineering / enterprise-agent actions.
 
 Core promise:
 
 > An agent saying an action succeeded is not proof that the action happened.
 
-Target demo path:
+Target causal chain:
 
 ```text
 mission
--> agent planning/work
+-> Gemini-backed planning/context
+-> deterministic role delegation
 -> explicit operation-bound human consent
 -> bounded external effect
 -> authoritative provider readback
@@ -136,15 +80,7 @@ mission
 -> VERIFIED | BLOCKED_BY_MISSING_EVIDENCE | CONTRADICTED
 ```
 
-The judged story should emphasize the unlikely hero: a solo developer / small team getting enterprise-grade agent safety without a full SRE/security/platform organization.
-
-Fortified Enterprise Fleet alignment must be real, not decorative: Google agent framework/SDK, Gemini, Google Cloud runtime/infrastructure and defensible security/identity/observability surfaces.
-
----
-
-# 4. Current core architecture
-
-Eight roles are implemented and separated:
+Eight separated roles remain implemented:
 
 ```text
 orchestrator
@@ -157,36 +93,21 @@ gatekeeper
 operator
 ```
 
-Authority boundaries:
-
-- **Orchestrator** — planning/decomposition only; no external mutation, no final verdict.
-- **Scout** — context/grounding boundary; no fake citations.
-- **Builder** — deterministic artifact/spec preparation; cannot certify external truth.
-- **Analyst** — deterministic analysis; no invented truth/confidence scores.
-- **Sentinel** — security/permission checks; cannot grant consent.
-- **Auditor** — evidence integrity inspection; cannot replace Judge.
-- **Gatekeeper** — derives concrete `OperationSpec` and requests exact-operation human consent; never auto-approves.
-- **Operator** — executes only authorized effects through the effect executor; cannot judge itself.
-- **Independent Verifier** — read-only snapshots.
-- **Judge** — non-mutating final verdict authority.
-
-Memory/context is advisory and cannot satisfy runtime proof.
+Only roles that really call Gemini advertise Gemini. Memory/context remains advisory and cannot satisfy runtime proof.
 
 ---
 
-# 5. Closed hardening boundaries
+# 3. Closed hardening boundaries
 
 ## Consent / identity
 
 - no auto-consent
 - pending remains pending until explicit human action
 - consent bound to exact `OperationSpec`
-- engine distinguishes decision authenticity from execution authorization
-- REJECTED can be authentic while remaining unusable for execution
 - signed short-lived HttpOnly operator session
-- identity derived server-side
 - client cannot assert operator identity
-- forged request IDs / operator identities regression-tested
+- server derives operator identity
+- forged decision/request/operator identities regression-tested
 - authenticated production consent HTTP E2E green
 - consent modal accessibility/focus policy regression-tested
 
@@ -197,7 +118,7 @@ Memory/context is advisory and cannot satisfy runtime proof.
 - readback-before-retry mandatory
 - unavailable readback never authorizes blind write
 - conflicting operation identity never overwritten
-- transient consent/provider failure does not poison durable idempotency cache
+- transient consent/provider failure does not poison final idempotency cache
 - only readback-observed durable success is cached final
 
 ## Evidence / Judge
@@ -216,245 +137,223 @@ BLOCKED_BY_MISSING_EVIDENCE
 CONTRADICTED
 ```
 
-## Reproducibility / runtime
+---
 
-- committed `package-lock.json`
-- `npm ci` canonical install
-- `npm run verify:ci` canonical local/CI chain
-- Cloud Run `PORT` contract fixed and smoke-tested on injected port
-- source-head vs tested synthetic merge receipt explicit
-- README contains clone/install/test/run instructions
+# 4. Google Cloud provider truth already observed
+
+Real Cloud Run provider state has been read manually in Cloud Shell / Console.
+
+Observed facts:
+
+- the `prooffleet` Cloud Run service exists
+- its region is `europe-west1`
+- an existing runtime service account is attached
+- the current AI Studio-created revision is **not** source-bound to the hardened GitHub branch because `PROOFFLEET_SOURCE_REVISION` is absent
+- therefore the existing live service is **not** treated as proof for the current PR head
+- Firestore API was enabled during provider investigation
+- the Firestore `(default)` database does **not** exist
+- no Firestore database location has been selected or created by this hardening lane
+
+Do not hardcode private project identifiers, numeric project numbers, account credentials, API keys or service-account secrets in source or docs.
 
 ---
 
-# 6. Google Cloud live-proof lane
+# 5. Revisionsgleich Cloud Run candidate path
 
-Prepared but **NOT executed live yet**.
+Prepared and CI-proven, but **not deployed live yet**.
 
-Workflow:
-
-```text
-.github/workflows/gcp-live-proof.yml
-```
-
-Safety properties already regression-tested:
-
-- manual `workflow_dispatch` only
-- never push/PR automatic mutation
-- GitHub OIDC / Workload Identity Federation
-- no long-lived service-account JSON key
-- `id-token: write`
-- explicit manual Firestore confirmation phrase:
+Relevant files:
 
 ```text
-I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE
+Dockerfile
+.dockerignore
+.github/workflows/gcp-deploy-candidate.yml
+tests/gcp-deploy-candidate.test.ts
 ```
 
-- exact workflow source SHA is bound into the operation identity
-- Cloud Run must expose matching `PROOFFLEET_SOURCE_REVISION` before Firestore proof write is authorized
-- generated auth artifacts and proof receipts excluded from Git/Docker context
+Candidate-deploy contract:
 
-Required real repository variables are still unresolved in this session:
+- build immutable Docker image from exact source revision
+- push SHA-tagged image to Artifact Registry
+- require returned `sha256:` image digest
+- deploy a new Cloud Run revision with **zero traffic**
+- merge only `PROOFFLEET_SOURCE_REVISION=<exact source head>` into existing environment
+- preserve existing environment variable names
+- preserve existing runtime service account
+- provider readback must match exact source SHA + image digest
+- candidate revision must still receive 0% traffic after deploy
+- deployment creates an observation receipt
+- traffic promotion is intentionally absent from this workflow
 
-```text
-PROOFFLEET_GCP_PROJECT_ID
-PROOFFLEET_GCP_REGION
-PROOFFLEET_GCP_WIF_PROVIDER
-PROOFFLEET_GCP_WIF_SERVICE_ACCOUNT
-PROOFFLEET_CLOUDRUN_SERVICE
-PROOFFLEET_FIRESTORE_COLLECTION
-```
+Pre-merge trigger contract:
 
-Do not guess them and do not replace WIF with a long-lived JSON service-account key.
+- ordinary pushes and PR synchronize events never deploy
+- pre-merge deploy may start only from an explicit PR `labeled` event
+- required label: `proofleet-deploy-candidate`
+- actor must be the repository owner
+- PR must originate from the same repository
+- deploy identity is `pull_request.head.sha`, never GitHub's synthetic merge SHA
+- post-merge `workflow_dispatch` remains available once the workflow exists on the default branch
 
-Required live proof:
-
-1. exact source deployed/identified on Cloud Run;
-2. Cloud Run provider readback;
-3. declared source SHA equals candidate source SHA;
-4. explicit owner-approved Firestore proof write;
-5. authoritative Firestore readback of exact operation identity;
-6. Actions artifact `gcp-live-proof-receipt.json` inspected;
-7. provider observation projected into application Evidence/Receipt;
-8. independent Judge only then allowed to produce VERIFIED for the live demo claim.
+Do not apply the deploy label until provisioning is complete and an explicit live-deploy decision is made.
 
 ---
 
-# 7. Devpost state
+# 6. GCP deploy bootstrap
 
-Project exists:
-
-```text
-https://devpost.com/software/prooffleet
-```
-
-Repository is registered:
+Prepared and regression-tested:
 
 ```text
-https://github.com/OuroborosCollective/Prooffleet
+scripts/bootstrap-gcp-deploy.sh
+tests/gcp-deploy-bootstrap.test.ts
 ```
 
-**Do not final-submit yet.**
+Purpose:
 
-Architecture work:
+- discover canonical project identity through provider readback
+- read the existing Cloud Run runtime service account authoritatively
+- keep runtime identity and deployment identity separate
+- prepare a dedicated `prooffleet-deploy` service account
+- prepare GitHub OIDC / Workload Identity Federation restricted to exactly `OuroborosCollective/Prooffleet`
+- prepare one Artifact Registry Docker repository
+- grant only resource-scoped deployment rights
+
+Intended minimal roles:
 
 ```text
-docs/architecture.mmd
+roles/iam.workloadIdentityUser
+roles/artifactregistry.writer
+roles/run.developer
+roles/iam.serviceAccountUser
 ```
 
-A PNG/PDF architecture rendering was generated and visually inspected in the prior chat, but the Devpost connector did not expose upload support for the submission architecture-file field. The source currently reflects the temporary 3.6 model state and must be updated after the Gemini correction before final rendering/upload.
+Explicitly forbidden in this bootstrap:
 
-Still required before final submission:
+```text
+roles/owner
+roles/editor
+roles/run.admin
+roles/artifactregistry.admin
+roles/iam.serviceAccountAdmin
+```
 
-- corrected final architecture PNG/PDF uploaded to Devpost
-- real Google Cloud deployment/readback proof
-- exact Google Cloud services selected based on what was truly used
-- real Gemini call exercised in the deployed demo
-- approximately 4-minute public YouTube/Vimeo demo showing working app and Google Cloud backend
-- final project write-up, learnings and technologies
-- final required Devpost questions/track fields
-- final submission only after all truth-sensitive fields match evidenced implementation
+The bootstrap does **not**:
+
+- create service-account JSON keys
+- create Firestore resources
+- choose Firestore location
+- deploy Cloud Run
+- change Cloud Run traffic
+
+The run #159 regression executes the bootstrap with a fake `gcloud` provider and proves that default mode performs only provider readbacks while printing all mutations as dry-run plans.
 
 ---
 
-# 8. Mandatory working method
+# 7. Exact next action
 
-This is the operating procedure that worked well and must continue.
+## P0 — real Cloud Shell deploy-bootstrap dry-run
 
-## Before every task/context/tool switch
+Run `scripts/bootstrap-gcp-deploy.sh` in the real Google Cloud environment **without `--apply`**.
 
-1. make **one coherent causal change set**;
-2. push/write it to `hardening/fortified-fleet`;
-3. read the exact PR head from GitHub;
-4. confirm `main` did not unexpectedly move;
-5. read the GitHub Actions run for that exact source head;
-6. inspect the actual job/log, not merely a green badge;
-7. preserve source-head vs synthetic-merge identity explicitly;
-8. update the handoff at meaningful P0 boundaries.
+Required real inputs are already known from provider readback but must be supplied at execution time instead of hardcoded in repository source:
 
-## When CI/runtime is red
+```text
+--project-id <verified-project-id>
+--region europe-west1
+--cloud-run-service prooffleet
+```
 
-1. fetch the exact failing job/log;
-2. identify the **first causal error family**;
-3. patch only that family;
-4. add a regression that would have failed before the patch;
-5. push;
-6. run/read the same remote lane again;
-7. do not begin unrelated work until the lane is understood.
+Expected outcome:
 
-## Evidence rules
+- canonical project ID/number read back
+- existing Cloud Run runtime identity read back
+- dedicated deploy service-account identity derived
+- WIF pool/provider existing state or planned creation shown
+- Artifact Registry existing state or planned creation shown
+- only `[dry-run]` mutation lines
+- final six repository variables printed
+- no IAM / registry / Cloud Run / traffic / Firestore mutation performed
 
-- planning != execution
-- execution != proof
-- memory != truth
-- hash integrity != external truth
-- logs/traces != automatically business truth
-- green UI != verified outcome
-- agent success text != authoritative readback
-- no runtime mock/fake can satisfy a production proof requirement
-- missing required provider observation => `BLOCKED_BY_MISSING_EVIDENCE`
+After the user returns the dry-run output:
+
+1. inspect every provider identity and planned mutation;
+2. reject any unexpected broad role or identity collapse;
+3. only then consider a separate explicit `--apply` run;
+4. after apply, perform authoritative readback before setting GitHub repository variables;
+5. only after provisioning is proven may the candidate-deploy label be created/applied.
+
+Firestore remains outside this step.
+
+---
+
+# 8. Still-open hackathon P0s
+
+Even after candidate Cloud Run deployment, the project is not submission-ready until the following are real and evidenced:
+
+1. actual Google ADK / qualifying Google agent framework use in the orchestration path;
+2. live 8-agent end-to-end canary;
+3. one explicitly consented external effect with authoritative provider readback;
+4. Firestore location/database created only after an explicit location decision;
+5. live negative demos:
+   - claimed success without provider evidence -> BLOCKED;
+   - provider contradiction -> CONTRADICTED;
+   - ambiguous write -> no duplicate apply;
+6. synchronized final evidence report generated from exact submission commit;
+7. final architecture artifact and public demo video;
+8. final Devpost fields matching the actually observed services/model/runtime.
+
+No managed-service or runtime claim without provider readback.
+
+---
+
+# 9. Mandatory engineering loop
+
+This operating method is part of the project discipline and must continue:
+
+1. pick one highest-value causal/runtime gap;
+2. read exact current PR head;
+3. make one coherent change set;
+4. add a regression that enforces the property;
+5. push/write the branch;
+6. re-read exact PR head and `main` base;
+7. read GitHub Actions for that exact source head;
+8. if red, read the exact first failing job/log;
+9. fix only the first causal error family;
+10. repeat until remote CI is green and understood;
+11. run runtime/provider readbacks separately from unit evidence;
+12. update this handoff at meaningful P0 boundaries.
+
+Evidence rules:
+
+```text
+planning != execution
+execution != proof
+memory != truth
+hash integrity != external truth
+agent success text != authoritative readback
+unit evidence != live provider evidence
+```
+
+Missing required provider observation means:
+
+```text
+BLOCKED_BY_MISSING_EVIDENCE
+```
 
 Never manufacture a success fallback.
 
 ---
 
-# 9. Exact next-work order for the fresh chat
-
-## P0-1 — correct Gemini model truth
-
-1. read this handoff;
-2. read current PR head and Run #111;
-3. independently check current official Google Gemini docs;
-4. resolve whether `gemini-3.7-flash` is the correct supported model for the hackathon;
-5. if confirmed, revert the mistaken 3.6-only restriction across runtime/manifest/tests/guard/README/architecture source while preserving authority/provenance hardening;
-6. add/update regression(s) around the official supported model contract;
-7. push;
-8. read exact new head + CI + logs;
-9. do not continue until green and understood.
-
-## P0-2 — finalize architecture artifact
-
-After model correction:
-
-1. update `docs/architecture.mmd`;
-2. render final PNG/PDF;
-3. visually inspect labels/arrows/truth boundaries;
-4. ensure live GCP is shown as pending unless actually observed;
-5. upload to Devpost architecture field manually if connector still lacks file-upload support.
-
-## P0-3 — resolve real GCP identity/WIF
-
-Resolve actual:
-
-- Google Cloud project ID
-- region
-- WIF provider resource
-- WIF service account
-- Cloud Run service
-- Firestore database/collection
-
-Set only verified values.
-
-## P0-4 — live provider proof
-
-Execute the manual live-proof workflow only after real identities and minimal IAM are checked. Require Cloud Run + Firestore authoritative readback and inspect the resulting receipt artifact.
-
-## P0-5 — real end-to-end demo mission
-
-Run a mission that visibly proves:
-
-```text
-Gemini-backed reasoning
--> deterministic role delegation
--> explicit human consent
--> external Firestore effect
--> authoritative readback
--> evidence receipt chain
--> independent verification
--> Judge VERIFIED
-```
-
-Also demonstrate a negative case where a claimed success without matching authoritative evidence becomes BLOCKED or CONTRADICTED.
-
-## P1 — Fortified managed surfaces
-
-Only after the causal core is stable, add/prove the managed features that materially improve judging:
-
-- Pub/Sub
-- Google ADK / Agent Runtime if actually integrated
-- Agent Registry
-- Memory Bank
-- Agent Identity / Gateway
-- Model Armor
-- OpenTelemetry / Agent Observability
-
-No managed-service claim without provision + readback.
-
-## Final Devpost
-
-Then produce/upload:
-
-- final architecture file
-- final public demo video
-- exact technologies/services/model
-- learnings
-- reproducible testing answer = Yes only if README/current source still support it
-- category = Fortified Enterprise Fleet
-- final submit only after all mandatory fields are evidence-aligned.
-
----
-
 # 10. Merge rule
 
-Keep PR #1 Draft until at minimum:
+Keep PR #1 Draft and keep `main` unchanged until at minimum:
 
-- current branch head has green immutable-lock CI;
-- corrected Gemini model contract is independently verified and green;
-- consent production E2E remains green;
-- source/tested merge identities remain unambiguous;
-- at least one real Google Cloud mutating effect is proven by authoritative readback;
+- exact current source head has green CI and Docker runtime smoke;
+- candidate Cloud Run revision is deployed from an exact source SHA and read back with matching image digest;
+- at least one real provider effect is proven by authoritative readback;
 - final live demo mission can reach VERIFIED only through real readback;
 - no production truth path uses mocks/fakes;
-- Devpost artifact claims match the final evidenced implementation.
+- mandatory Google agent-framework requirement is satisfied by real code;
+- Devpost claims match the final evidenced implementation.
 
-Do not merge `main` merely because the local/unit architecture is strong.
+Do not merge `main` merely because local/unit architecture is strong.
