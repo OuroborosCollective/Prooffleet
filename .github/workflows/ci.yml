@@ -89,13 +89,22 @@ jobs:
       - name: Verify TypeScript, regressions, production build and HTTP runtime
         run: npm run verify:ci
 
-      - name: Record exact tested revision
+      - name: Record source and tested revision identities
         shell: bash
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CI_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          echo "tested_sha=${GITHUB_SHA}"
-          git rev-parse HEAD
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node scripts/ci-revision-receipt.mjs > ci-revision-receipt.json
+          cat ci-revision-receipt.json
+          {
+            echo '### ProofFleet CI revision receipt'
+            echo '```json'
+            cat ci-revision-receipt.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   dependency-audit:
     name: dependency-audit
@@ -131,3 +140,6 @@ jobs:
 #   present, so it cannot create a commit loop.
 # - Every later verification run automatically uses `npm ci`.
 # - Runtime truth remains in `npm run verify:ci`; the workflow only invokes it.
+# - Pull-request verification deliberately tests GitHub's checked-out merge
+#   candidate while recording the PR source head separately. Neither identity
+#   may be labeled as the other.
