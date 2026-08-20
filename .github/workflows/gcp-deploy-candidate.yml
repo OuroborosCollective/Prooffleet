@@ -305,6 +305,9 @@ jobs:
             candidateTag,
             candidateUrl: taggedUrl,
             httpHealthObserved: false,
+            adkCanaryEligible: false,
+            adkCanaryObserved: false,
+            adkCanaryStatus: 'UNKNOWN',
             observedAt: new Date().toISOString(),
           };
           fs.writeFileSync('gcp-deploy-candidate-receipt.json', JSON.stringify(receipt, null, 2) + '\n');
@@ -336,20 +339,58 @@ jobs:
             exit 2
           fi
 
-          node - <<'NODE'
+          curl --fail --silent --show-error --max-time 5 \
+            "$CANDIDATE_URL/api/runtime/adk-canary" > "$RUNNER_TEMP/candidate-adk-canary.json"
+
+          node - "$EXPECTED_SOURCE_REVISION" <<'NODE'
           const fs = require('fs');
+          const [expectedSourceRevision] = process.argv.slice(2);
           const healthPath = process.env.RUNNER_TEMP + '/candidate-health.json';
+          const canaryPath = process.env.RUNNER_TEMP + '/candidate-adk-canary.json';
           const health = JSON.parse(fs.readFileSync(healthPath, 'utf8'));
           if (!health || typeof health !== 'object' || Array.isArray(health)) {
             throw new Error('candidate /api/health did not return a JSON object');
           }
+
+          const canary = JSON.parse(fs.readFileSync(canaryPath, 'utf8'));
+          if (!canary || typeof canary !== 'object' || Array.isArray(canary)) {
+            throw new Error('candidate ADK canary status did not return a JSON object');
+          }
+          if (canary.eligible !== true) {
+            throw new Error('candidate runtime is not eligible for an ADK canary');
+          }
+          if (canary.sourceRevision !== expectedSourceRevision) {
+            throw new Error(`candidate ADK canary source mismatch: expected ${expectedSourceRevision}, got ${canary.sourceRevision || '<missing>'}`);
+          }
+          if (!['NOT_RUN', 'OBSERVED'].includes(canary.status)) {
+            throw new Error(`candidate ADK canary status is not acceptable before promotion: ${canary.status || '<missing>'}`);
+          }
+
+          if (canary.status === 'OBSERVED') {
+            const observed = canary.receipt || {};
+            if (observed.outcome !== 'ADK_RUNTIME_OBSERVED') throw new Error('observed ADK canary receipt outcome mismatch');
+            if (observed.sourceRevision !== expectedSourceRevision) throw new Error('observed ADK canary receipt source mismatch');
+            if (observed.framework !== 'google-adk') throw new Error('observed ADK canary framework mismatch');
+            if (observed.modelId !== 'gemini-3.7-flash') throw new Error('observed ADK canary model mismatch');
+            if (observed.challengeMatched !== true || observed.finalResponseObserved !== true) {
+              throw new Error('observed ADK canary receipt is incomplete');
+            }
+          }
+
           const receiptPath = 'gcp-deploy-candidate-receipt.json';
           const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
           receipt.httpHealthObserved = true;
           receipt.healthEndpoint = '/api/health';
           receipt.healthObservedAt = new Date().toISOString();
+          receipt.adkCanaryEligible = true;
+          receipt.adkCanaryEndpoint = '/api/runtime/adk-canary';
+          receipt.adkCanaryStatus = canary.status;
+          receipt.adkCanaryObserved = canary.status === 'OBSERVED';
+          if (canary.status === 'OBSERVED') {
+            receipt.adkCanaryReceipt = canary.receipt;
+          }
           fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
-          console.log('[candidate-smoke] exact tagged candidate passed /api/health with zero normal traffic');
+          console.log('[candidate-smoke] exact tagged candidate passed /api/health and source-bound ADK canary eligibility readback with zero normal traffic');
           NODE
 
       - name: Upload candidate deployment receipt
