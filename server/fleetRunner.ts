@@ -14,7 +14,11 @@
  *   reale Evidence + Receipts. Keine hartcodierten Scores.
  */
 
-import { getGenAI } from "./gemini";
+import {
+  getGenAI,
+  PROOFFLEET_GEMINI_MODEL,
+  PROOFFLEET_GEMINI_PROVIDER,
+} from "./gemini";
 import {
   FLEET,
   createOrchestratorAgent,
@@ -207,9 +211,11 @@ export class FleetRunner {
     const genAI = getGenAI();
     if (!genAI) return undefined;
     return {
+      providerName: PROOFFLEET_GEMINI_PROVIDER,
+      modelId: PROOFFLEET_GEMINI_MODEL,
       generate: async (prompt: string) => {
         const response = await genAI.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: PROOFFLEET_GEMINI_MODEL,
           contents: prompt,
         });
         return response.text || "";
