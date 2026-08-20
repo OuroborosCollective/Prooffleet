@@ -1,65 +1,68 @@
 # ProofFleet Engineering Handoff — 2026-08-21
 
-Status: **active checkpoint / continue current engineering loop**
+Status: **repo-side hardening checkpoint complete; next boundary is explicit live-cloud activation**
 
 Repository: `OuroborosCollective/Prooffleet`  
 Branch: `hardening/fortified-fleet`  
 PR: `#1 Hardening: evidence-first fortified fleet` — **Draft**  
 Base `main`: `89302dfbe1ef732ff3962b47ce914a7e299f5075`  
-Last fully verified source head before this handoff-only commit: `7c4ebd26456ca485be28beeee52c5c49068c2cbf`  
-Synthetic merge SHA tested by GitHub: `d9ab4614dfd7d43e1f21cca45a945c94e3083002`  
-GitHub Actions run: `32423846591` / run number `215`
+Last fully verified source head before this handoff-only commit: `c54a01cb2dbae4676a24499728869c549a3d0d7b`  
+Synthetic PR merge SHA tested by GitHub: `55846cf7055b77342fe6429df0908231f6c7051a`  
+GitHub Actions run: `32424591904` / run number `221`
 
 Hackathon: **Google All Things Agentic Hackathon**  
 Target track: **Fortified Enterprise Fleet**  
 Submission deadline: **2026-09-01 02:00 Europe/Berlin**
 
-This file update advances the branch head. Re-read PR #1 and CI before changing code; do not call the handoff-only head green until its own CI is observed.
+This handoff update advances the branch head. Before any further code or cloud mutation: re-read PR #1, record the new source head, and require CI for that exact head.
 
 ---
 
-# 1. Exact current verified checkpoint
+# 1. Exact verified checkpoint
 
-Run #215 is fully green for source head:
+Run #221 is fully green for source head:
 
 ```text
-7c4ebd26456ca485be28beeee52c5c49068c2cbf
+c54a01cb2dbae4676a24499728869c549a3d0d7b
 ```
 
 Remote evidence from the same run:
 
-- immutable dependency install through `npm ci`
-- TypeScript `tsc --noEmit` passed
-- **31 test files passed**
-- **163 tests passed**
+- immutable dependency install via `npm ci`
+- TypeScript `tsc --noEmit`
+- **32 test files passed**
+- **167 tests passed**
 - production truth guards passed
-- production Vite + esbuild build passed
+- Vite + esbuild production build passed
 - production HTTP runtime smoke passed
-- authenticated consent production HTTP E2E passed
-- exact Docker image built and started with Cloud Run `PORT=8080`
+- authenticated consent HTTP E2E passed
+- exact Docker image built and started with `PORT=8080`
 - container `/api/health` readback passed
 - high/critical dependency audit passed
 - source head and GitHub synthetic merge SHA recorded separately
+- `actions/checkout@v7` and `actions/setup-node@v7` executed successfully
+- previous GitHub warning about deprecated Node.js 20 action runtimes is absent from the Run #221 verify log
+- application runtime remains Node.js 22; only the GitHub Action internals moved to Node 24
 
-Exact CI identity receipt:
+Exact CI revision receipt:
 
 ```json
 {
   "schemaVersion": "prooffleet.ci-revision-receipt.v1",
   "eventName": "pull_request",
-  "sourceHeadSha": "7c4ebd26456ca485be28beeee52c5c49068c2cbf",
+  "sourceHeadSha": "c54a01cb2dbae4676a24499728869c549a3d0d7b",
   "baseSha": "89302dfbe1ef732ff3962b47ce914a7e299f5075",
-  "testedCheckoutSha": "d9ab4614dfd7d43e1f21cca45a945c94e3083002",
-  "testedMergeSha": "d9ab4614dfd7d43e1f21cca45a945c94e3083002"
+  "testedCheckoutSha": "55846cf7055b77342fe6429df0908231f6c7051a",
+  "testedMergeSha": "55846cf7055b77342fe6429df0908231f6c7051a"
 }
 ```
 
-Dependency-audit truth on the current graph:
+Dependency truth:
 
 - `npm audit --audit-level=high` exits successfully
 - **0 high / 0 critical** findings
-- remaining known upstream findings are low/moderate only
-- ADK high/critical transitives are pinned to patched versions with npm overrides rather than weakening the audit gate:
+- remaining upstream findings are low/moderate only
+- ADK high/critical transitives remain pinned to patched versions:
 
 ```json
 {
@@ -124,41 +127,39 @@ ADK_RUNTIME_OBSERVED != mission VERIFIED
 
 # 3. Google ADK reasoning path — repo-side CLOSED
 
-Google ADK is part of the real Orchestrator/Scout reasoning path rather than a decorative dependency.
-
-Current runtime contract:
+Current contract:
 
 - dependency: `@google/adk ^1.6.0`
 - model: `gemini-3.7-flash`
 - provider provenance: `google-adk`
-- `FleetRunner` keeps a narrow `LlmProvider` boundary
-- `server/gemini.ts` executes a real ADK `LlmAgent + Runner + InMemorySessionService`
-- each invocation creates an isolated ADK session
-- input is explicit `role: "user"`
-- only `isFinalResponse(event)` output is accepted
+- `FleetRunner` retains a narrow LLM-provider boundary
+- `server/gemini.ts` executes real ADK `LlmAgent + Runner + InMemorySessionService`
+- each invocation uses an isolated ADK session
+- input role is explicit `user`
+- only final ADK responses are accepted
 - missing final response fails closed
 - no direct `GoogleGenAI` execution path remains
 
-Authority boundary:
+Authority separation:
 
 - ADK receives no tools
-- ADK cannot execute external effects
-- ADK cannot grant or infer consent
-- ADK cannot mutate Evidence Ledger
-- ADK cannot act as Independent Verifier or Judge
-- Orchestrator/Scout output is `AGENT_OUTPUT`, never authoritative provider truth
-- Scout remains explicitly ungrounded until a real source tool exists
+- ADK cannot execute effects
+- ADK cannot grant/infer consent
+- ADK cannot mutate evidence
+- ADK cannot act as Verifier or Judge
+- Orchestrator/Scout output is `AGENT_OUTPUT`, never provider truth
+- Scout remains ungrounded until a real source tool exists
 
 Key compatibility:
 
 - accepts `GOOGLE_API_KEY` or legacy AI-Studio `GEMINI_API_KEY`
 - both present but different => fail closed
-- legacy-only key may be aliased process-locally for ADK
-- key value is never logged or placed into receipts
+- legacy-only key may be process-locally aliased for ADK
+- key values are never logged or persisted in receipts
 
 ---
 
-# 4. ADK live-canary contract — repo-side CLOSED, live network observation pending
+# 4. ADK runtime-canary — repo-side CLOSED; live network observation PENDING
 
 Core files:
 
@@ -169,22 +170,19 @@ scripts/adk-live-canary.ts
 src/components/AdkRuntimeCanaryPanel.tsx
 ```
 
-Safety and truth properties now enforced:
+Safety contract:
 
-- fresh random challenge per process
-- exact challenge echo required from Gemini
-- receipt persists only hashes + safe identities
-- raw prompt/challenge/response/API credential never persisted
-- exact lowercase 40-char `PROOFFLEET_SOURCE_REVISION` required before provider call
-- missing provider => fail closed
-- empty final response => fail closed
-- mismatch => fail closed
-- weak nonce => fail closed before provider call
-- concurrent triggers deduplicate into one provider call
-- an observed receipt is memoized for that process
+- fresh random challenge
+- exact Gemini echo required
+- receipt stores hashes + safe identities only
+- no raw prompt/challenge/response/credential persistence
+- exact lowercase 40-character source SHA required before provider call
+- missing provider, empty final response, challenge mismatch and weak nonce fail closed
+- concurrent triggers deduplicate
+- observed receipt memoizes for the runtime process
 - raw provider errors are sanitized
 
-Canary status vocabulary:
+Status vocabulary:
 
 ```text
 NOT_RUN
@@ -193,42 +191,30 @@ OBSERVED
 FAILED
 ```
 
-`OBSERVED` means only:
+`OBSERVED` proves only that this exact source-bound runtime process completed the bounded ADK -> Gemini challenge/response. It does not prove a deployment effect, mission result or final verdict.
 
-> this exact source-bound runtime process completed the bounded Google ADK -> Gemini challenge/response.
-
-It does **not** prove a deployment effect, Firestore effect, mission result or final Judge verdict.
-
----
-
-# 5. Canary HTTP + operator UI authority — repo-side CLOSED
-
-Server contract:
+HTTP / operator authority:
 
 - `GET /api/runtime/adk-canary` is read-only
 - `POST /api/runtime/adk-canary` requires `X-ProofFleet-Canary-Intent: 1`
-- POST uses the existing signed HttpOnly operator session
+- POST reuses the signed HttpOnly operator session
 - server owns operator identity
-- no second authentication authority was created
 - ineligible source binding prevents provider call
 
 UI contract:
 
-- `AdkRuntimeCanaryPanel` uses the same `handleOperatorAuthenticate` flow as consent
-- operator token exists only in password component state
-- successful authentication clears the local token state
-- no `localStorage`, `sessionStorage` or JS cookie access
-- Canary POST contains no body/token/operator identity/API key
-- request carries only same-origin session + explicit intent header
+- same operator authentication flow as consent
+- password exists only in component state and is cleared after authentication
+- no browser storage / JS cookie access
+- Canary POST contains no body, token, operator identity or API key
+- request uses same-origin session + explicit intent header only
 - 401 clears local authenticated state
 - UI says `ADK_RUNTIME_OBSERVED`, never `VERIFIED`
-- unbound runtime is shown as `SOURCE BINDING REQUIRED`
-
-Run #215 explicitly includes seven `adk-canary-ui` safety regressions for these properties.
+- unbound runtime displays `SOURCE BINDING REQUIRED`
 
 ---
 
-# 6. Cloud Run candidate lane — repo-side CLOSED, live execution pending
+# 5. Cloud Run zero-traffic candidate lane — repo-side CLOSED; live execution PENDING
 
 Workflow:
 
@@ -238,24 +224,23 @@ Workflow:
 
 Safety contract:
 
-- exact PR source SHA, never synthetic merge SHA
+- exact source SHA, never synthetic merge SHA
 - WIF only; no service-account JSON key
-- immutable Artifact Registry image digest
-- new Cloud Run candidate with **0% normal traffic**
+- immutable Artifact Registry digest
+- new candidate receives **0% normal traffic**
 - source-SHA-derived candidate tag
-- preserve existing runtime service account and upstream env names
-- provider must report Ready + matching source SHA + matching digest
-- exact tagged candidate URL must pass `/api/health`
-- candidate workflow may only **GET** `/api/runtime/adk-canary`
-- candidate workflow must never trigger the model canary itself
-- candidate receipt records `adkCanaryEligible=true` only when source binding matches
-- candidate receipt keeps `adkCanaryObserved=false` until a real operator-triggered observation exists
+- existing runtime service account and upstream env names must be preserved
+- provider must report Ready + exact source + exact digest
+- tagged candidate must pass `/api/health`
+- workflow may only GET canary state; it never triggers Gemini
+- candidate receipt can state `adkCanaryEligible=true` when source binding matches
+- `adkCanaryObserved` remains false until a real operator-triggered observation exists
 
 No Candidate deploy has been executed by this engineering lane yet.
 
 ---
 
-# 7. Cloud Run promotion lane — repo-side CLOSED, live execution pending
+# 6. Promotion lane — repo-side CLOSED; live execution PENDING
 
 Workflow:
 
@@ -263,78 +248,64 @@ Workflow:
 .github/workflows/gcp-promote-candidate.yml
 ```
 
-Promotion is fail-closed behind all of these gates:
+Before any traffic mutation it requires:
 
 - explicit owner trigger
 - exact source-derived candidate tag
-- candidate still at 0% normal traffic
+- candidate remains at 0% normal traffic
 - provider Ready
-- exact source label
-- exact declared source env
-- same runtime service account
+- exact source label and declared source env
+- unchanged runtime service account
 - immutable expected Artifact Registry digest
-- fresh `/api/health` on tagged candidate
-- **runtime `GET /api/runtime/adk-canary` must return `OBSERVED`**
-- canary receipt source SHA must equal requested promotion SHA
-- framework must be `google-adk`
-- model must be `gemini-3.7-flash`
-- challenge and response hashes must both be valid SHA-256
-- challenge/response hashes must match
+- fresh candidate `/api/health`
+- runtime canary status exactly `OBSERVED`
+- canary source SHA exactly equals promotion source SHA
+- framework exactly `google-adk`
+- model exactly `gemini-3.7-flash`
+- valid matching challenge/response SHA-256 values
 - `challengeMatched=true`
 - `finalResponseObserved=true`
 
-Only after those checks may the lane execute:
+Only then may it move the exact revision to 100% traffic.
 
-```text
-gcloud run services update-traffic <service> --to-revisions=<exact-revision>=100
-```
+After traffic change it still requires authoritative provider readback and promoted service `/api/health`; failures attempt rollback to the prior traffic snapshot.
 
-After traffic change it still requires:
-
-- authoritative 100% provider readback
-- no other positive traffic target
-- promoted service `/api/health`
-- retained ADK observation in the promotion receipt
-
-Any failed post-readback/health check attempts rollback to the prior traffic snapshot.
-
-Promotion lane never builds images, creates revisions, touches Firestore or triggers the ADK canary.
+Promotion never creates revisions, builds images, touches Firestore or triggers the ADK canary.
 
 No Promotion has been executed by this engineering lane yet.
 
 ---
 
-# 8. Consent / idempotency / truth boundaries — CLOSED repo-side
+# 7. Consent / idempotency / evidence boundaries — repo-side CLOSED
 
-## Consent and operator identity
+Consent:
 
 - no auto-consent
 - pending remains pending until explicit human decision
 - consent bound to exact `OperationSpec`
 - signed short-lived HttpOnly operator session
 - client cannot assert operator identity
-- forged request/decision/operator regressions
-- authenticated production consent HTTP E2E green
-- alertdialog/focus/Escape safety tested
+- authenticated production consent E2E green
+- forged request/decision/operator cases covered
 
-## Idempotency and ambiguous writes
+Idempotency / ambiguous writes:
 
 - same-operation in-flight deduplication
-- 50 concurrent same-operation calls -> exactly one apply
+- 50 concurrent calls -> exactly one apply
 - readback-before-retry mandatory
-- unavailable readback never authorizes a blind write
-- conflicting operation identity never overwritten
-- transient failures do not poison final idempotency cache
-- only readback-observed durable success is cached final
+- unavailable readback never authorizes blind write
+- conflicts fail closed
+- transient failures do not poison final cache
+- only readback-observed durable success becomes final cached state
 
-## Evidence and Judge
+Evidence / Judge:
 
-- hashes prove integrity, not world truth
+- hashes prove integrity, not external truth
 - memory cannot satisfy runtime proof
 - runtime mocks/fakes cannot satisfy production evidence
-- rejected consent can never become VERIFIED
-- mission verdict scoped to exact mission evidence/receipts
-- verdict vocabulary only:
+- rejected consent cannot become VERIFIED
+- mission verdict is scoped to exact mission evidence/receipts
+- exact verdict enum only:
 
 ```text
 VERIFIED
@@ -344,21 +315,20 @@ CONTRADICTED
 
 ---
 
-# 9. Real Google Cloud truth already observed
+# 8. Real Google Cloud truth already observed
 
-Authoritative provider observations already established outside repo-only tests:
+Provider observations already established:
 
 - project ID: `project-b29d4703-a302-4b05-b2e`
 - project number: `511695074775`
 - Cloud Run service: `prooffleet`
 - region: `europe-west1`
-- original observed revision: `prooffleet-00001-6rc`
-- original service was deployed by Google AI Studio
+- original observed AI-Studio revision: `prooffleet-00001-6rc`
 - original revision did **not** expose `PROOFFLEET_SOURCE_REVISION`
-- therefore the original live service is **not** evidence for the hardened GitHub head
-- existing runtime identity observed: `511695074775-compute@developer.gserviceaccount.com`
-- Firestore `(default)` database does **not** exist
-- no Firestore location has been selected by this lane
+- therefore original live AI-Studio service is not evidence for the hardened GitHub branch
+- existing runtime identity: `511695074775-compute@developer.gserviceaccount.com`
+- Firestore `(default)` database does not exist
+- no Firestore location has been selected
 
 Deploy bootstrap:
 
@@ -367,51 +337,74 @@ scripts/bootstrap-gcp-deploy.sh
 tests/gcp-deploy-bootstrap.test.ts
 ```
 
-A real bootstrap **dry-run** completed and explicitly reported that no IAM, Artifact Registry, Cloud Run, traffic or Firestore mutation occurred.
+A real bootstrap **dry-run** completed and explicitly reported no IAM, Artifact Registry, Cloud Run, traffic or Firestore mutation.
 
-User-facing Cloud Shell is **not** part of the normal operating path. Prefer GitHub automation plus small Google Cloud Console UI actions when unavoidable.
-
----
-
-# 10. Exact next P0
-
-## P0-A — remove CI action-runtime deprecation before live-cloud work
-
-Run #215 is green but its log reports that `actions/checkout@v4` and `actions/setup-node@v4` target deprecated Node.js 20 action runtimes and are currently being forced onto Node.js 24 by GitHub.
-
-Do not ignore the warning indefinitely.
-
-Next loop:
-
-1. verify current official Node-24-ready action majors from the upstream GitHub Action repositories;
-2. update only `.github/workflows/ci.yml` action majors;
-3. add/extend regression ensuring deprecated action majors do not return;
-4. push;
-5. re-read exact source head;
-6. require full remote CI green, including Docker smoke + audit + revision receipt.
-
-This is CI hygiene, not a product truth change.
-
-## P0-B — live-cloud activation after CI hygiene
-
-After P0-A is green:
-
-1. verify/provision dedicated GitHub WIF deployment identity and Artifact Registry with no long-lived key;
-2. keep existing runtime identity unchanged until separately reviewed;
-3. configure the repository variables already required by candidate/promotion workflows;
-4. deploy one exact source head as a **0%-traffic candidate**;
-5. read back revision, digest, source SHA, runtime identity, tag URL and HTTP health;
-6. use the UI/operator session to run one real ADK/Gemini canary on that exact candidate;
-7. read back `ADK_RUNTIME_OBSERVED` from the candidate;
-8. only then consider explicit promotion.
-
-Do **not** set candidate/promotion labels or trigger live mutation without an explicit live-mutation decision.
+Cloud Shell is not the normal user path. Prefer GitHub automation and minimal Google Cloud Console UI actions where unavoidable.
 
 ---
 
-# 11. Still-open hackathon P0s after first live candidate
+# 9. CI action-runtime hygiene — CLOSED
 
-1. live source-bound ADK/Gemini observation on exact candidate;
+Run #221 proves:
+
+- `actions/checkout@v7`
+- `actions/setup-node@v7`
+- application runtime still Node.js 22
+- verification job keeps explicit npm cache
+- privileged lock-reconciliation job disables automatic npm caching
+- dependency-audit job disables automatic npm caching
+- the former Node.js 20 GitHub Action deprecation warning is absent
+
+Regression:
+
+```text
+tests/ci-action-runtime.test.ts
+```
+
+This test prevents old checkout/setup-node majors from returning and preserves the cache boundary.
+
+---
+
+# 10. Exact next boundary — LIVE CLOUD ACTIVATION
+
+Repo-side preparation is now strong enough that the next useful evidence is provider-side, not another simulated local layer.
+
+Before any live mutation:
+
+1. verify or provision the dedicated GitHub WIF deployment identity;
+2. verify or provision Artifact Registry repository `prooffleet`;
+3. keep the existing Cloud Run runtime identity unchanged until separately reviewed;
+4. configure GitHub repository variables required by candidate/promotion workflows;
+5. explicitly decide to create one **0%-traffic candidate revision** from one exact green source head.
+
+Then, and only then:
+
+6. deploy exact green source head as zero-traffic candidate;
+7. provider-readback revision, digest, source SHA, runtime identity, tag URL and `/api/health`;
+8. use the ProofFleet UI/operator session to trigger one real ADK/Gemini canary on that tagged candidate;
+9. read back `ADK_RUNTIME_OBSERVED`;
+10. do **not** promote until the explicit promotion decision is separately made.
+
+Do not set candidate/promotion labels or trigger a workflow that mutates GCP without an explicit live-mutation decision.
+
+Repository Variables expected by the prepared workflows:
+
+```text
+PROOFFLEET_GCP_PROJECT_ID=project-b29d4703-a302-4b05-b2e
+PROOFFLEET_GCP_REGION=europe-west1
+PROOFFLEET_GCP_WIF_PROVIDER=projects/511695074775/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo
+PROOFFLEET_GCP_DEPLOY_SERVICE_ACCOUNT=prooffleet-deploy@project-b29d4703-a302-4b05-b2e.iam.gserviceaccount.com
+PROOFFLEET_CLOUDRUN_SERVICE=prooffleet
+PROOFFLEET_ARTIFACT_REPOSITORY=prooffleet
+```
+
+These are configuration identities, not secrets.
+
+---
+
+# 11. Remaining hackathon P0s after first live candidate
+
+1. live source-bound ADK/Gemini observation;
 2. live 8-agent end-to-end mission canary;
 3. one explicitly consented external effect with authoritative provider readback;
 4. explicit Firestore location decision before database creation;
@@ -420,7 +413,7 @@ Do **not** set candidate/promotion labels or trigger live mutation without an ex
    - provider contradiction -> `CONTRADICTED`
    - ambiguous write -> no duplicate apply
 6. synchronized final evidence report from exact submission commit;
-7. Devpost architecture/demo/write-up using only observed facts;
+7. Devpost architecture/demo/write-up using observed facts only;
 8. PR review/main merge only after live evidence gates are green.
 
 ---
@@ -428,13 +421,13 @@ Do **not** set candidate/promotion labels or trigger live mutation without an ex
 # 12. Mandatory engineering loop
 
 1. choose one highest-value causal/runtime gap;
-2. read exact current PR head;
+2. re-read exact PR head;
 3. make one coherent change set;
-4. add regression for the property;
+4. add a regression for the property;
 5. push/write branch;
-6. re-read exact PR head and unchanged `main` base;
+6. re-read exact source head and unchanged `main` base;
 7. read Actions for that exact source head;
-8. if red, read first failing job/log;
+8. if red, read the first failing job/log;
 9. fix only that causal error family;
 10. repeat until remote CI is green and understood;
 11. keep provider/live evidence separate from unit evidence;
@@ -450,7 +443,7 @@ Keep PR #1 Draft and keep `main` unchanged until at minimum:
 
 - exact source head has green CI and Docker runtime smoke;
 - a real networked ADK/Gemini canary is observed on an exact source-bound runtime;
-- candidate Cloud Run revision is deployed from exact source SHA and read back with matching immutable digest;
+- Cloud Run candidate is deployed from exact source SHA and read back with matching immutable digest;
 - at least one real provider effect is proven by authoritative readback;
 - final demo mission reaches VERIFIED only through required real evidence;
 - no production truth path uses mocks/fakes;
