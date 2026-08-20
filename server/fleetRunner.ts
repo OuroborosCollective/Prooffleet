@@ -161,13 +161,13 @@ export class FleetRunner {
     if (!request) {
       return null;
     }
-    const validation = this.consentEngine.validateGrantForOperation(
+    const validation = this.consentEngine.validateDecisionForOperation(
       grant,
       request.spec as OperationSpec
     );
     if (!validation.valid) {
       this.addStep(mission, "gatekeeper", "consent_gate",
-        `Consent grant rejected by validation: ${validation.reason}`);
+        `Consent decision rejected by validation: ${validation.reason}`);
       return mission;
     }
 
