@@ -42,12 +42,12 @@ jobs:
     timeout-minutes: 20
 
     env:
-      GCP_PROJECT_ID: ${{ vars.PROOFFLEET_GCP_PROJECT_ID }}
-      GCP_REGION: ${{ vars.PROOFFLEET_GCP_REGION }}
-      GCP_WIF_PROVIDER: ${{ vars.PROOFFLEET_GCP_WIF_PROVIDER }}
-      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.PROOFFLEET_GCP_DEPLOY_SERVICE_ACCOUNT }}
-      PROOFFLEET_CLOUDRUN_SERVICE: ${{ vars.PROOFFLEET_CLOUDRUN_SERVICE }}
-      PROOFFLEET_ARTIFACT_REPOSITORY: ${{ vars.PROOFFLEET_ARTIFACT_REPOSITORY }}
+      GCP_PROJECT_ID: project-b29d4703-a302-4b05-b2e
+      GCP_REGION: europe-west1
+      GCP_WIF_PROVIDER: projects/511695074775/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo
+      GCP_DEPLOY_SERVICE_ACCOUNT: prooffleet-deploy@project-b29d4703-a302-4b05-b2e.iam.gserviceaccount.com
+      PROOFFLEET_CLOUDRUN_SERVICE: prooffleet
+      PROOFFLEET_ARTIFACT_REPOSITORY: prooffleet
       EXPECTED_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.expected_source_revision }}
       DEPLOY_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
       EVENT_ACTOR: ${{ github.actor }}
