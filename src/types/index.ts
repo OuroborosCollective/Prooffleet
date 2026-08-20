@@ -47,6 +47,38 @@ export type JudgeVerdict = 'VERIFIED' | 'BLOCKED_BY_MISSING_EVIDENCE' | 'CONTRAD
 export type ConsentStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
 export type ProvisioningStatus = 'NOT_PROVISIONED' | 'PROVISIONED_VERIFIED' | 'PROVISIONING_FAILED';
 
+/** Authoritative origin class for a proof observation. */
+export type EvidenceSourceKind =
+  | 'AGENT_OUTPUT'
+  | 'SYSTEM_TRACE'
+  | 'REPOSITORY_READBACK'
+  | 'CI_READBACK'
+  | 'CLOUD_RUN_READBACK'
+  | 'PUBSUB_READBACK'
+  | 'FIRESTORE_READBACK'
+  | 'API_READBACK'
+  | 'TEST_READBACK'
+  | 'SECURITY_POLICY_READBACK'
+  | 'STATIC_CANDIDATE';
+
+/** A proof source reports an observation, a contradiction, or unavailability. */
+export type EvidenceAssertion = 'OBSERVED' | 'CONTRADICTED' | 'UNAVAILABLE';
+
+/**
+ * A requirement that MUST be satisfied before a claim can become VERIFIED.
+ * Hash integrity alone is deliberately insufficient for runtime-required claims.
+ */
+export interface ProofRequirement {
+  requirementId: string;
+  evidenceType: string;
+  allowedSourceKinds: EvidenceSourceKind[];
+  minCount?: number;
+  runtimeRequired?: boolean;
+  operationId?: string;
+  sourceRevision?: string;
+  deploymentRevision?: string;
+}
+
 export interface OperationSpec {
   operationId: string;          // stabile, vom Aufrufer vergebene Idempotency-ID
   kind: 'read' | 'write' | 'execute';
