@@ -41,6 +41,7 @@ import type {
   ExecutionStep,
   Mission,
   OperationSpec,
+  ProofRequirement,
   VerdictRecord,
 } from "../src/types/index";
 
@@ -61,8 +62,6 @@ export class FleetRunner {
   private eventListeners: Array<(event: FleetEvent) => void> = [];
   private missionsRun = 0;
 
-  // ------------------------------------------------------------------ events
-
   public subscribe(listener: (event: FleetEvent) => void) {
     this.eventListeners.push(listener);
     return () => {
@@ -79,8 +78,6 @@ export class FleetRunner {
       }
     });
   }
-
-  // ------------------------------------------------------------------ state
 
   public getActiveMission(): Mission | null {
     return this.activeMission;
@@ -102,15 +99,12 @@ export class FleetRunner {
     return this.missionsRun;
   }
 
-  /** Reset fuer /api/evidence/reset: neue Ledger/Receipt/Memory-Instanzen. */
   public resetEvidence(): void {
     this.ledger = new EvidenceLedger();
     this.receipts = new ReceiptChain();
     this.memoryStore = new MemoryStore();
     this.activeMission = null;
   }
-
-  // ------------------------------------------------------------------ mission
 
   public async startMission(
     title: string,
@@ -158,11 +152,6 @@ export class FleetRunner {
     return mission;
   }
 
-  /**
-   * Resume-Pfad: wird AUSSCHLIESSLICH von /api/consent/respond mit einem
-   * echten ConsentGrant der ConsentEngine aufgerufen. Kein Timer, kein
-   * Auto-Approve — ohne Grant passiert hier nichts.
-   */
   public async resumeWithGrant(grant: ConsentGrant): Promise<Mission | null> {
     const mission = this.activeMission;
     if (!mission || mission.status !== "paused_for_consent") {
@@ -199,9 +188,6 @@ export class FleetRunner {
         `Operator consent APPROVED by ${grant.operatorIdentity} — resuming mission.`,
         { requestId: grant.requestId, operationHash: grant.operationHash });
 
-      // Operator bekommt den Grant + Spec ueber den Context. Bewusst KEIN
-      // Executor injiziert: ohne provisioniertes Execution-Target meldet der
-      // Operator ehrlich 'not_executed' statt Erfolg zu behaupten.
       const operator = createOperatorAgent();
       const sharedMemory = this.memoryStoreFor("operator");
       sharedMemory.set("approvedConsent", grant);
@@ -216,8 +202,6 @@ export class FleetRunner {
     this.finalizeMission(mission, manifestHash, missionRevision, grant.decision === "APPROVED");
     return mission;
   }
-
-  // ------------------------------------------------------------------ pipeline
 
   private llmProvider(): LlmProvider | undefined {
     const genAI = getGenAI();
@@ -235,7 +219,6 @@ export class FleetRunner {
 
   private buildFleet(): FleetAgent[] {
     const llm = this.llmProvider();
-    // Nur die Rollen, die laut SPEC einen Provider sinnvoll nutzen, bekommen ihn.
     return FLEET.map((agent) => {
       if (agent.role === "orchestrator") return createOrchestratorAgent(llm);
       if (agent.role === "scout") return createScoutAgent({ llm });
@@ -260,7 +243,6 @@ export class FleetRunner {
       const agent = byRole.get(role);
       if (!agent) throw new Error(`fleet agent missing for role: ${role}`);
 
-      // Echte Snapshots fuer analyst/sentinel/auditor in den Context legen.
       if (role === "analyst" || role === "sentinel") {
         this.memoryStoreFor(role).set("evidenceSnapshot", this.evidenceSnapshot());
       }
@@ -277,8 +259,6 @@ export class FleetRunner {
       await this.runAgent(mission, agent, manifestHash, missionRevision);
     }
 
-    // GATEKEEPER: erstellt den Consent-Request und pausiert die Mission.
-    // KEIN Warten, KEIN Auto-Approve — Resume nur via resumeWithGrant().
     if (mission.requireConsentForWrite) {
       const gatekeeper = byRole.get("gatekeeper");
       if (!gatekeeper) throw new Error("fleet agent missing for role: gatekeeper");
@@ -288,7 +268,6 @@ export class FleetRunner {
       return;
     }
 
-    // requireConsentForWrite=false: ehrlich markieren, dass kein Consent noetig war.
     const operator = byRole.get("operator");
     if (operator) {
       await this.runAgent(mission, operator, manifestHash, missionRevision);
@@ -351,7 +330,6 @@ export class FleetRunner {
       logger: (msg) => console.log(`[fleet:${agent.role}] ${msg}`),
     };
 
-    // Nur der gatekeeper bekommt requestConsent (Separation of Duties).
     if (agent.role === "gatekeeper") {
       ctx.requestConsent = (spec: unknown) => {
         const request = this.consentEngine.createRequest(
@@ -385,11 +363,9 @@ export class FleetRunner {
   ) {
     mission.activeAgentId = "auditor";
 
-    // Reale Verifikation der Kette — keine Selbstzertifizierung durch Agenten.
     const chainVerification = this.ledger.verifyChain();
     const receiptVerification = this.receipts.verifyChain();
 
-    // Runner-Level-Abschlussblock mit dem ECHTEN Verifikationsergebnis.
     const finalBlock = this.ledger.seal({
       agentId: "auditor",
       claim: FINALIZE_CLAIM,
@@ -420,11 +396,34 @@ export class FleetRunner {
       finalBlock.blockHash
     );
 
-    // Judge-Urteil ueber die reale Evidence + Receipts (reine Funktion).
+    const pendingOperation = mission.consentRequests.at(-1)?.spec;
+    const proofRequirements: ProofRequirement[] =
+      consentApproved && mission.requireConsentForWrite && pendingOperation
+        ? [
+            {
+              requirementId: "external_effect_readback",
+              evidenceType: "operation_result",
+              allowedSourceKinds: [
+                "REPOSITORY_READBACK",
+                "CI_READBACK",
+                "CLOUD_RUN_READBACK",
+                "PUBSUB_READBACK",
+                "FIRESTORE_READBACK",
+                "API_READBACK",
+                "TEST_READBACK",
+              ],
+              runtimeRequired: true,
+              operationId: pendingOperation.operationId,
+              minCount: 1,
+            },
+          ]
+        : [];
+
     const judgeVerdict: VerdictRecord = Judge.judge(
       FINALIZE_CLAIM,
       this.ledger.getChain(),
-      this.receipts.exportReceipts()
+      this.receipts.exportReceipts(),
+      proofRequirements
     );
 
     const lastBlock = this.ledger.getChain().at(-1);
@@ -454,12 +453,16 @@ export class FleetRunner {
         : `Mission '${mission.title}' durch Operator-Entscheidung abgebrochen (Consent REJECTED). Judge-Urteil ueber die vorhandene Evidence: ${judgeVerdict.verdict}.`,
       judgeVerdict,
       integrityVerified: chainVerification.isValid && receiptVerification.isValid,
-      compliancePassed: chainVerification.isValid && receiptVerification.isValid,
+      compliancePassed:
+        chainVerification.isValid &&
+        receiptVerification.isValid &&
+        judgeVerdict.verdict === "VERIFIED",
       recommendations,
       chainHashDigest: lastBlock?.blockHash ?? "",
     };
 
-    mission.status = consentApproved ? "completed" : "failed";
+    mission.status =
+      consentApproved && judgeVerdict.verdict === "VERIFIED" ? "completed" : "failed";
     mission.finishedAt = new Date().toISOString();
     mission.evidenceChain = this.ledger.getChain();
 
