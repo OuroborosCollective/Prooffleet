@@ -8,6 +8,7 @@ import { createGcpAdapters } from "./server/adapters/gcp/index";
 import type { ConsentGrant } from "./src/types/index";
 import { OperatorSessionManager } from "./server/security/operatorSession";
 import { resolveRuntimePort } from "./server/runtimePort";
+import { AdkRuntimeCanaryController } from "./server/adkCanaryController";
 
 async function startServer() {
   const app = express();
@@ -16,6 +17,7 @@ async function startServer() {
   app.use(express.json());
 
   const operatorSessions = new OperatorSessionManager(process.env);
+  const adkCanary = new AdkRuntimeCanaryController(process.env.PROOFFLEET_SOURCE_REVISION);
 
   // Letzter echter Verifikationsstand — null solange nie verifiziert wurde.
   let lastVerifiedBlockHash: string | null = null;
@@ -28,6 +30,46 @@ async function startServer() {
       timestamp: new Date().toISOString(),
       agentCount: FLEET_AGENTS.length,
     });
+  });
+
+  // Read-only ADK canary status. This endpoint never triggers a model call.
+  app.get("/api/runtime/adk-canary", (_req, res) => {
+    res.json(adkCanary.snapshot());
+  });
+
+  // Trigger exactly one bounded ADK -> Gemini canary for this process.
+  // Authority reuses the existing authenticated operator session and a distinct
+  // intent header; request bodies cannot provide identity or provider secrets.
+  app.post("/api/runtime/adk-canary", async (req, res) => {
+    if (req.get("x-prooffleet-canary-intent") !== "1") {
+      return res.status(403).json({ error: "canary intent header required" });
+    }
+
+    const operator = operatorSessions.authenticate(req.headers.cookie);
+    if (!operator.configured) {
+      return res.status(503).json({ error: "operator authentication is not provisioned" });
+    }
+    if (!operator.authenticated || !operator.identity) {
+      return res.status(401).json({ error: "authenticated operator session required" });
+    }
+
+    const before = adkCanary.snapshot();
+    if (!before.eligible) {
+      return res.status(409).json({
+        error: "adk canary requires an exact runtime source revision",
+        canary: before,
+      });
+    }
+
+    const canary = await adkCanary.trigger();
+    if (canary.status === "FAILED") {
+      return res.status(502).json({
+        error: canary.failureReason ?? "adk_canary_provider_error",
+        canary,
+      });
+    }
+
+    res.json({ success: true, canary });
   });
 
   // Get Fleet Agents
