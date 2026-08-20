@@ -8,6 +8,10 @@ import { ConsentGateModal } from "./components/ConsentGateModal";
 import { TruthVerificationReport } from "./components/TruthVerificationReport";
 import { MissionAnalytics } from "./components/MissionAnalytics";
 import {
+  AdkRuntimeCanaryPanel,
+  type AdkCanarySnapshot,
+} from "./components/AdkRuntimeCanaryPanel";
+import {
   AgentContract,
   Mission,
   EvidenceBlock,
@@ -21,11 +25,14 @@ export default function App() {
   const [evidenceChain, setEvidenceChain] = useState<EvidenceBlock[]>([]);
   const [pendingConsent, setPendingConsent] = useState<ConsentRequest | null>(null);
   const [telemetry, setTelemetry] = useState<FleetTelemetry | null>(null);
+  const [adkCanary, setAdkCanary] = useState<AdkCanarySnapshot | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(true);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [isSubmittingConsent, setIsSubmittingConsent] = useState<boolean>(false);
   const [isAuthenticatingOperator, setIsAuthenticatingOperator] = useState<boolean>(false);
+  const [isRunningAdkCanary, setIsRunningAdkCanary] = useState<boolean>(false);
   const [operatorAuthError, setOperatorAuthError] = useState<string | null>(null);
+  const [adkCanaryError, setAdkCanaryError] = useState<string | null>(null);
   const [operatorSession, setOperatorSession] = useState<{
     configured: boolean;
     authenticated: boolean;
@@ -38,13 +45,22 @@ export default function App() {
 
   const fetchFleetData = async () => {
     try {
-      const [agentsRes, missionRes, chainRes, telemetryRes, consentRes, operatorSessionRes] = await Promise.all([
+      const [
+        agentsRes,
+        missionRes,
+        chainRes,
+        telemetryRes,
+        consentRes,
+        operatorSessionRes,
+        adkCanaryRes,
+      ] = await Promise.all([
         fetch("/api/agents"),
         fetch("/api/fleet/active-mission"),
         fetch("/api/evidence/chain"),
         fetch("/api/telemetry"),
         fetch("/api/consent/pending"),
         fetch("/api/operator/session"),
+        fetch("/api/runtime/adk-canary"),
       ]);
 
       if (agentsRes.ok) {
@@ -83,6 +99,11 @@ export default function App() {
           authenticated: data.authenticated === true,
           identity: typeof data.identity === "string" ? data.identity : null,
         });
+      }
+
+      if (adkCanaryRes.ok) {
+        const data = (await adkCanaryRes.json()) as AdkCanarySnapshot;
+        setAdkCanary(data);
       }
     } catch (err) {
       console.error("Error fetching fleet data:", err);
@@ -203,6 +224,7 @@ export default function App() {
         return false;
       }
       setOperatorSession({ configured: true, authenticated: true, identity: data.identity || null });
+      setAdkCanaryError(null);
       return true;
     } catch (err) {
       console.error("Operator authentication failed:", err);
@@ -210,6 +232,43 @@ export default function App() {
       return false;
     } finally {
       setIsAuthenticatingOperator(false);
+    }
+  };
+
+  const handleRunAdkCanary = async () => {
+    setIsRunningAdkCanary(true);
+    setAdkCanaryError(null);
+    try {
+      const res = await fetch("/api/runtime/adk-canary", {
+        method: "POST",
+        headers: {
+          "X-ProofFleet-Canary-Intent": "1",
+        },
+        credentials: "same-origin",
+      });
+      const data = await res.json();
+
+      if (data.canary) {
+        setAdkCanary(data.canary as AdkCanarySnapshot);
+      }
+
+      if (!res.ok || data.success !== true) {
+        if (res.status === 401) {
+          setOperatorSession((prev) => ({ ...prev, authenticated: false, identity: null }));
+        } else if (res.status === 503) {
+          setOperatorSession({ configured: false, authenticated: false, identity: null });
+        }
+        setAdkCanaryError(data.error || "ADK live canary failed closed.");
+        return;
+      }
+
+      setAdkCanaryError(null);
+    } catch (err) {
+      console.error("ADK live canary request failed:", err);
+      setAdkCanaryError("ADK live canary request failed.");
+    } finally {
+      setIsRunningAdkCanary(false);
+      void fetchFleetData();
     }
   };
 
@@ -275,6 +334,19 @@ export default function App() {
           onRunMission={handleRunMission}
           isRunning={isRunning}
           onResetChain={handleResetChain}
+        />
+
+        <AdkRuntimeCanaryPanel
+          canary={adkCanary}
+          operatorConfigured={operatorSession.configured}
+          operatorAuthenticated={operatorSession.authenticated}
+          operatorIdentity={operatorSession.identity}
+          isAuthenticating={isAuthenticatingOperator}
+          authError={operatorAuthError}
+          isRunningCanary={isRunningAdkCanary}
+          canaryError={adkCanaryError}
+          onAuthenticate={handleOperatorAuthenticate}
+          onRunCanary={handleRunAdkCanary}
         />
 
         {activeMission?.finalVerdict && (
