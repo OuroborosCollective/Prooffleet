@@ -26,6 +26,7 @@ interface ProofPayload {
   operationId?: string;
   sourceRevision?: string;
   deploymentRevision?: string;
+  consentApproved?: boolean;
   [key: string]: unknown;
 }
 
@@ -63,6 +64,8 @@ export class Judge {
    * Base integrity rules:
    * - no evidence for the claim          -> BLOCKED_BY_MISSING_EVIDENCE
    * - hash-invalid / conflicting claim   -> CONTRADICTED
+   * - final mission evidence carrying explicit consentApproved=false can prove
+   *   the rejection happened, but can NEVER prove the requested effect happened
    *
    * Optional proof requirements:
    * - requirement candidates are searched across the WHOLE evidence snapshot,
@@ -129,6 +132,23 @@ export class Judge {
         verdict: 'CONTRADICTED',
         rationale: 'Evidence is hash-invalid or mutually contradictory.',
         contradictions,
+        judgedAt,
+      };
+    }
+
+    // A rejected human authorization is authoritative evidence that the write
+    // was intentionally NOT authorized. It may be an integrity-valid record,
+    // but the requested mission effect is still absent and therefore cannot be
+    // reported as VERIFIED.
+    if (
+      claim === 'mission finalized' &&
+      relevant.some((block) => proofPayload(block.payload)?.consentApproved === false)
+    ) {
+      return {
+        subject: claim,
+        verdict: 'BLOCKED_BY_MISSING_EVIDENCE',
+        rationale: 'Operator rejected the requested effect; no authorized external-effect readback can exist.',
+        missingEvidence: ['approved_operation_effect'],
         judgedAt,
       };
     }
