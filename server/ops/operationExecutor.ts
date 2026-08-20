@@ -3,12 +3,14 @@
  * Readback-before-retry und Consent-Gate (SPEC Abschnitt 3, Coder B).
  *
  * Garantien:
- * - Idempotency: gleiche operationId -> gespeichertes finales Result,
+ * - Idempotency: gleiche operationId -> gespeichertes DURABLES Erfolgsresult,
  *   handler.apply wird NICHT erneut aufgerufen.
+ * - Blocker und transiente Fehler werden NICHT gecacht; dieselbe operationId
+ *   kann nach gueltigem Consent oder Provider-Recovery erneut versucht werden.
  * - In-Flight-Dedup: konkurrierende execute()-Aufrufe mit gleicher
  *   operationId waehrend einer laufenden Ausfuehrung awaiten dasselbe
- *   Promise; handler.apply laeuft exakt einmal. Nach Abschluss wandert
- *   das Result in die Idempotency-Map.
+ *   Promise; handler.apply laeuft exakt einmal. Nach beobachtetem Erfolg
+ *   wandert das Result in die Idempotency-Map.
  * - Readback-before-retry: fuer kind 'write'/'execute' laeuft VOR dem
  *   Erstversuch und VOR jedem Retry handler.readback(spec).
  * - EIN READBACK-FEHLER autorisiert niemals einen Write. Stattdessen wird
@@ -289,13 +291,18 @@ export class OperationExecutor {
     });
   }
 
-  /** Gespeichertes finales Result einer operationId, falls vorhanden. */
+  /** Gespeichertes dauerhaftes Erfolgsresult einer operationId, falls vorhanden. */
   getResult(operationId: string): OperationResult | undefined {
     return this.finalResults.get(operationId);
   }
 
   private finish(operationId: string, result: OperationResult): OperationResult {
-    this.finalResults.set(operationId, result);
+    // Nur ein durch Readback beobachteter Zielzustand ist idempotent durable.
+    // Consent-Blocker, Provider-Ausfaelle und Konflikte bleiben retrybar und
+    // duerfen dieselbe operationId nicht dauerhaft vergiften.
+    if (result.status === 'applied' || result.status === 'already_applied') {
+      this.finalResults.set(operationId, result);
+    }
     return result;
   }
 }
