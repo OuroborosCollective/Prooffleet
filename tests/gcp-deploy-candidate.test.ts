@@ -77,7 +77,22 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain('Tagged no-traffic candidate never passed /api/health.');
     expect(workflow).toContain('receipt.httpHealthObserved = true');
     expect(workflow).toContain("receipt.healthEndpoint = '/api/health'");
-    expect(workflow).toContain('[candidate-smoke] exact tagged candidate passed /api/health with zero normal traffic');
+    expect(workflow).toContain('[candidate-smoke] exact tagged candidate passed /api/health');
+  });
+
+  it('reads source-bound ADK canary eligibility without triggering a model call from the deploy workflow', () => {
+    expect(workflow).toContain('"$CANDIDATE_URL/api/runtime/adk-canary" > "$RUNNER_TEMP/candidate-adk-canary.json"');
+    expect(workflow).toContain('canary.eligible !== true');
+    expect(workflow).toContain('canary.sourceRevision !== expectedSourceRevision');
+    expect(workflow).toContain("!['NOT_RUN', 'OBSERVED'].includes(canary.status)");
+    expect(workflow).toContain("observed.outcome !== 'ADK_RUNTIME_OBSERVED'");
+    expect(workflow).toContain("observed.framework !== 'google-adk'");
+    expect(workflow).toContain("observed.modelId !== 'gemini-3.7-flash'");
+    expect(workflow).toContain("receipt.adkCanaryObserved = canary.status === 'OBSERVED'");
+    expect(workflow).toContain("receipt.adkCanaryEndpoint = '/api/runtime/adk-canary'");
+    expect(workflow).not.toContain('x-prooffleet-canary-intent');
+    expect(workflow).not.toContain('GOOGLE_API_KEY');
+    expect(workflow).not.toContain('GEMINI_API_KEY');
   });
 
   it('merges only the exact source revision into upstream environment instead of replacing AI Studio config', () => {
@@ -93,11 +108,14 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).not.toContain('511695074775-compute@developer.gserviceaccount.com');
   });
 
-  it('produces a receipt that cannot claim a promotable candidate before HTTP health is observed', () => {
+  it('produces a receipt that cannot claim a promotable candidate before HTTP health or ADK canary evidence is observed', () => {
     expect(workflow).toContain("outcome: 'OBSERVED_NO_TRAFFIC_CANDIDATE'");
     expect(workflow).toContain('providerReady: true');
     expect(workflow).toContain('httpHealthObserved: false');
+    expect(workflow).toContain('adkCanaryEligible: false');
+    expect(workflow).toContain('adkCanaryObserved: false');
     expect(workflow).toContain('receipt.httpHealthObserved = true');
+    expect(workflow).toContain("receipt.adkCanaryObserved = canary.status === 'OBSERVED'");
     expect(workflow).toContain('Upload candidate deployment receipt');
   });
 
