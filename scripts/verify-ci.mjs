@@ -39,7 +39,7 @@ function truthGuard() {
     ['HARDCODED_TRUTH_SCORE', /overallTruthScore\s*:\s*98\.4|overallConsensusScore\s*:\s*98\.6|empiricalScore\s*:\s*98\.8/],
     ['FAKE_SENTINEL_RESULT', /promptInjectionRisk\s*:\s*["']NEGLIGIBLE["']|secretsExposure\s*:\s*["']NONE_DETECTED["']|policyViolations\s*:\s*0/],
     ['CLIENT_ASSERTED_OPERATOR_IDENTITY', /const\s*\{[^}]*operatorIdentity[^}]*\}\s*=\s*req\.body/],
-    ['UNSUPPORTED_GEMINI_MODEL', /gemini-3\.7(?:-[a-z0-9.-]+)?/i],
+    ['STALE_GEMINI_MODEL', /gemini-3\.6(?:-[a-z0-9.-]+)?/i],
   ];
 
   const findings = [];
