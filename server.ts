@@ -6,12 +6,15 @@ import { fleetRunner } from "./server/fleetRunner";
 import { Judge, IndependentVerifier } from "./server/evidence/index";
 import { createGcpAdapters } from "./server/adapters/gcp/index";
 import type { ConsentGrant } from "./src/types/index";
+import { OperatorSessionManager } from "./server/security/operatorSession";
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
+
+  const operatorSessions = new OperatorSessionManager(process.env);
 
   // Letzter echter Verifikationsstand — null solange nie verifiziert wurde.
   let lastVerifiedBlockHash: string | null = null;
@@ -63,7 +66,6 @@ async function startServer() {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    // Send initial ping
     res.write(`data: ${JSON.stringify({ type: "connected", timestamp: new Date().toISOString() })}\n\n`);
 
     const unsubscribe = fleetRunner.subscribe((event) => {
@@ -141,16 +143,53 @@ async function startServer() {
     res.json({ integrations: statuses });
   });
 
+  // Operator session: short-lived, HttpOnly, server-authenticated identity.
+  app.get("/api/operator/session", (req, res) => {
+    const state = operatorSessions.authenticate(req.headers.cookie);
+    res.json({
+      configured: state.configured,
+      authenticated: state.authenticated,
+      identity: state.authenticated ? state.identity : null,
+      reason: state.authenticated ? undefined : state.reason,
+    });
+  });
+
+  app.post("/api/operator/session", (req, res) => {
+    const result = operatorSessions.createSession(req.body?.token);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.reason });
+    }
+    res.setHeader("Set-Cookie", result.setCookie);
+    res.json({
+      success: true,
+      authenticated: true,
+      identity: result.identity,
+      expiresAt: result.expiresAt,
+    });
+  });
+
   // Get Pending Consent Requests
   app.get("/api/consent/pending", (req, res) => {
     const pending = fleetRunner.getConsentEngine().getPendingRequests();
     res.json({ requests: pending });
   });
 
-  // Respond to Consent Request (Approve / Reject) — erzeugt einen echten
-  // ConsentGrant und stoesst ggf. den Mission-Resume an. Kein Auto-Approve.
+  // Respond to Consent Request (Approve / Reject). The operator identity comes
+  // ONLY from the authenticated HttpOnly session; request bodies cannot forge it.
   app.post("/api/consent/respond", async (req, res) => {
-    const { requestId, decision, operatorIdentity, reason } = req.body;
+    if (req.get("x-prooffleet-consent-intent") !== "1") {
+      return res.status(403).json({ error: "consent intent header required" });
+    }
+
+    const operator = operatorSessions.authenticate(req.headers.cookie);
+    if (!operator.configured) {
+      return res.status(503).json({ error: "operator authentication is not provisioned" });
+    }
+    if (!operator.authenticated || !operator.identity) {
+      return res.status(401).json({ error: "authenticated operator session required" });
+    }
+
+    const { requestId, decision, reason } = req.body ?? {};
     if (!requestId || !decision) {
       return res.status(400).json({ error: "requestId and decision required" });
     }
@@ -160,7 +199,7 @@ async function startServer() {
 
     const grant: ConsentGrant | null = fleetRunner
       .getConsentEngine()
-      .respond(requestId, decision, operatorIdentity || "Operator", reason);
+      .respond(requestId, decision, operator.identity, reason);
     if (!grant) {
       return res.status(404).json({ error: "Consent request not found or already decided" });
     }
