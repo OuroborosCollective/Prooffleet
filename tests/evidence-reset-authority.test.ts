@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 const here = dirname(fileURLToPath(import.meta.url));
 const server = readFileSync(join(here, '../server.ts'), 'utf8');
 const app = readFileSync(join(here, '../src/App.tsx'), 'utf8');
+const missionControl = readFileSync(join(here, '../src/components/MissionControl.tsx'), 'utf8');
 
 function between(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);
@@ -66,5 +67,12 @@ describe('evidence reset authority contract', () => {
     expect(successCheck).toBeGreaterThanOrEqual(0);
     expect(clearVerification).toBeGreaterThan(successCheck);
     expect(clearMission).toBeGreaterThan(successCheck);
+  });
+
+  it('does not present the destructive reset control as available without authenticated operator state', () => {
+    expect(app).toContain('canResetChain={operatorSession.configured && operatorSession.authenticated}');
+    expect(missionControl).toContain('canResetChain: boolean');
+    expect(missionControl).toContain('disabled={isRunning || !canResetChain}');
+    expect(missionControl).toContain('Authenticated operator session required to reset evidence');
   });
 });

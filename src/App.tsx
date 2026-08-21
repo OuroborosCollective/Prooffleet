@@ -365,6 +365,7 @@ export default function App() {
           onRunMission={handleRunMission}
           isRunning={isRunning}
           onResetChain={handleResetChain}
+          canResetChain={operatorSession.configured && operatorSession.authenticated}
         />
 
         <AdkRuntimeCanaryPanel
