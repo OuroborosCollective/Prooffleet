@@ -31,6 +31,9 @@ jobs:
       PROOFFLEET_FIRESTORE_COLLECTION: ${{ vars.PROOFFLEET_FIRESTORE_COLLECTION }}
       PROOFFLEET_SOURCE_REVISION: ${{ github.sha }}
       PROOFFLEET_LIVE_CONFIRMATION: ${{ inputs.confirmation }}
+      EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'
+      EXPECTED_GITHUB_OWNER_ID: '266194342'
+      EXPECTED_GITHUB_ACTOR_ID: '266194342'
 
     steps:
       - name: Checkout exact source revision
@@ -38,7 +41,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Fail closed on missing live-proof configuration
+      - name: Fail closed on missing configuration or mutable-name identity substitution
         shell: bash
         run: |
           set -euo pipefail
@@ -49,10 +52,18 @@ jobs:
             GCP_WIF_SERVICE_ACCOUNT
             PROOFFLEET_CLOUDRUN_SERVICE
             PROOFFLEET_FIRESTORE_COLLECTION
+            GITHUB_REPOSITORY_ID
+            GITHUB_REPOSITORY_OWNER_ID
+            GITHUB_ACTOR_ID
+            GITHUB_RUN_ID
+            GITHUB_RUN_ATTEMPT
+            RUNNER_NAME
+            RUNNER_OS
+            RUNNER_ARCH
           )
           for key in "${required[@]}"; do
             if test -z "${!key:-}"; then
-              echo "Missing required repository variable: ${key}" >&2
+              echo "Missing required live-proof value: ${key}" >&2
               exit 2
             fi
           done
@@ -69,6 +80,39 @@ jobs:
             exit 2
           fi
           test "$PROOFFLEET_SOURCE_REVISION" = "$GITHUB_SHA"
+          if test "$GITHUB_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+            echo "Repository ID mismatch: expected=$EXPECTED_GITHUB_REPOSITORY_ID actual=$GITHUB_REPOSITORY_ID" >&2
+            exit 2
+          fi
+          if test "$GITHUB_REPOSITORY_OWNER_ID" != "$EXPECTED_GITHUB_OWNER_ID"; then
+            echo "Repository owner ID mismatch: expected=$EXPECTED_GITHUB_OWNER_ID actual=$GITHUB_REPOSITORY_OWNER_ID" >&2
+            exit 2
+          fi
+          if test "$GITHUB_ACTOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+            echo "Dispatch actor ID mismatch: expected=$EXPECTED_GITHUB_ACTOR_ID actual=$GITHUB_ACTOR_ID" >&2
+            exit 2
+          fi
+
+      - name: Capture immutable GitHub execution identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { buildGitHubExecutionIdentity } from './scripts/authority-evidence.mjs';
+
+          const identity = buildGitHubExecutionIdentity(process.env, {
+            sourceRevision: process.env.PROOFFLEET_SOURCE_REVISION,
+            expectedRepositoryId: process.env.EXPECTED_GITHUB_REPOSITORY_ID,
+            expectedOwnerId: process.env.EXPECTED_GITHUB_OWNER_ID,
+          });
+          fs.writeFileSync(
+            process.env.RUNNER_TEMP + '/live-proof-execution-identity.json',
+            JSON.stringify(identity, null, 2) + '\n',
+            'utf8',
+          );
+          console.log(`[live-proof-identity] run_id=${identity.runId} run_attempt=${identity.runAttempt} repository_id=${identity.repositoryId} identity_hash=${identity.identityHash}`);
+          NODE
 
       - name: Authenticate to Google Cloud with Workload Identity Federation
         uses: google-github-actions/auth@v3
@@ -80,7 +124,7 @@ jobs:
           export_environment_variables: true
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -105,16 +149,59 @@ jobs:
           fi
 
       - name: Upload live proof receipt
+        id: live_proof_artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prooffleet-gcp-live-proof-${{ github.sha }}
+          name: prooffleet-gcp-live-proof-${{ github.run_id }}-${{ github.run_attempt }}
           path: gcp-live-proof-receipt.json
           if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Bind uploaded live-proof artifact to immutable execution identity
+        if: always() && steps.live_proof_artifact.outputs.artifact-id != ''
+        shell: bash
+        env:
+          LIVE_PROOF_ARTIFACT_ID: ${{ steps.live_proof_artifact.outputs.artifact-id }}
+          LIVE_PROOF_ARTIFACT_DIGEST: ${{ steps.live_proof_artifact.outputs.artifact-digest }}
+          LIVE_PROOF_ARTIFACT_NAME: prooffleet-gcp-live-proof-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { buildArtifactBinding } from './scripts/authority-evidence.mjs';
+
+          const receipt = JSON.parse(fs.readFileSync('gcp-live-proof-receipt.json', 'utf8'));
+          const executionIdentity = JSON.parse(fs.readFileSync(
+            process.env.RUNNER_TEMP + '/live-proof-execution-identity.json',
+            'utf8',
+          ));
+          const binding = buildArtifactBinding({
+            executionIdentity,
+            receiptHash: receipt.receiptHash,
+            artifactName: process.env.LIVE_PROOF_ARTIFACT_NAME,
+            artifactId: process.env.LIVE_PROOF_ARTIFACT_ID,
+            artifactDigest: process.env.LIVE_PROOF_ARTIFACT_DIGEST,
+          });
+          fs.writeFileSync(
+            'gcp-live-proof-artifact-binding.json',
+            JSON.stringify(binding, null, 2) + '\n',
+            'utf8',
+          );
+          console.log(`[live-proof-artifact-binding] artifact_id=${binding.artifactId} artifact_digest=${binding.artifactDigest} binding_hash=${binding.bindingHash}`);
+          NODE
+
+      - name: Upload live proof artifact binding
+        if: always() && steps.live_proof_artifact.outputs.artifact-id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: prooffleet-gcp-live-proof-binding-${{ github.run_id }}-${{ github.run_attempt }}
+          path: gcp-live-proof-artifact-binding.json
+          if-no-files-found: error
           retention-days: 30
 
       - name: Require observed live proof
         shell: bash
         run: |
           set -euo pipefail
-          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('gcp-live-proof-receipt.json','utf8'));if(r.outcome!=='OBSERVED'){console.error(r.reason);process.exit(2)};console.log('OBSERVED live GCP proof for',r.sourceRevision)"
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('gcp-live-proof-receipt.json','utf8'));if(r.outcome!=='OBSERVED'){console.error(r.reason);process.exit(2)};if(!/^[0-9a-f]{64}$/.test(String(r.receiptHash||'')))process.exit(2);console.log('OBSERVED live GCP proof for',r.sourceRevision,'execution',r.executionContextHash)"
