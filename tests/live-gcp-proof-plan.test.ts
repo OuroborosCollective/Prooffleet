@@ -2,15 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { LIVE_GCP_CONFIRMATION, buildLiveGcpProofPlan } from '../server/gcp/liveProof';
 
 const SHA = 'a'.repeat(40);
-const WIF_PROVIDER = 'projects/123456789012/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo';
+const PROJECT_NUMBER = '123456789012';
+const WIF_PROVIDER = `projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo`;
 const WIF_SERVICE_ACCOUNT = 'prooffleet-github@prooffleet-test1.iam.gserviceaccount.com';
 
 function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     GCP_PROJECT_ID: 'prooffleet-test1',
+    PROOFFLEET_GCP_PROJECT_NUMBER: PROJECT_NUMBER,
     GCP_REGION: 'europe-west1',
     GCP_WIF_PROVIDER: WIF_PROVIDER,
     GCP_WIF_SERVICE_ACCOUNT: WIF_SERVICE_ACCOUNT,
+    PROOFFLEET_WIF_PRINCIPAL: WIF_SERVICE_ACCOUNT,
     PROOFFLEET_CLOUDRUN_SERVICE: 'prooffleet',
     PROOFFLEET_FIRESTORE_COLLECTION: 'proof-effects',
     PROOFFLEET_SOURCE_REVISION: SHA,
@@ -29,7 +32,7 @@ function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 describe('Live GCP proof plan', () => {
-  it('binds operation identity to exact source, repository, run attempt and execution hash', () => {
+  it('binds operation identity to exact source, repository, run attempt and authenticated GCP identity', () => {
     const first = buildLiveGcpProofPlan(env());
     const second = buildLiveGcpProofPlan(env({ GITHUB_RUN_ATTEMPT: '2' }));
 
@@ -39,7 +42,11 @@ describe('Live GCP proof plan', () => {
       workflowRunId: '12345',
       workflowRunAttempt: '1',
       executionIdentityHash: first.executionIdentity.identityHash,
+      gcpProjectNumber: PROJECT_NUMBER,
+      observedWifPrincipal: WIF_SERVICE_ACCOUNT,
     });
+    expect(first.gcpProjectNumber).toBe(PROJECT_NUMBER);
+    expect(first.observedWifPrincipal).toBe(WIF_SERVICE_ACCOUNT);
     expect(first.operation.operationId).not.toBe(second.operation.operationId);
     expect(first.operation.targetResource).toBe('firestore:proof-effects');
   });
@@ -67,7 +74,7 @@ describe('Live GCP proof plan', () => {
     expect(serialized).not.toContain('renamed.yml');
   });
 
-  it('binds the expected WIF provider and service account as configuration prerequisites', () => {
+  it('requires configured and authenticated WIF identities to agree exactly', () => {
     const plan = buildLiveGcpProofPlan(env());
     expect(plan.wifProvider).toBe(WIF_PROVIDER);
     expect(plan.wifServiceAccount).toBe(WIF_SERVICE_ACCOUNT);
@@ -75,6 +82,15 @@ describe('Live GCP proof plan', () => {
       .toThrow('GCP_WIF_PROVIDER is malformed');
     expect(() => buildLiveGcpProofPlan(env({ GCP_WIF_SERVICE_ACCOUNT: 'human@example.com' })))
       .toThrow('GCP_WIF_SERVICE_ACCOUNT is malformed');
+    expect(() => buildLiveGcpProofPlan(env({ PROOFFLEET_WIF_PRINCIPAL: 'other@prooffleet-test1.iam.gserviceaccount.com' })))
+      .toThrow('authenticated WIF principal does not match configured WIF service account');
+  });
+
+  it('fails if the WIF provider project number diverges from authenticated project readback', () => {
+    expect(() => buildLiveGcpProofPlan(env({ PROOFFLEET_GCP_PROJECT_NUMBER: '999999999999' })))
+      .toThrow('WIF provider project number does not match authenticated Google project readback');
+    expect(() => buildLiveGcpProofPlan(env({ PROOFFLEET_GCP_PROJECT_NUMBER: 'project-number' })))
+      .toThrow('PROOFFLEET_GCP_PROJECT_NUMBER is malformed');
   });
 
   it('rejects malformed cloud and execution identity before provider calls', () => {
