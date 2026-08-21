@@ -10,6 +10,7 @@ export const LIVE_GCP_CONFIRMATION = 'I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE
 
 export interface LiveGcpProofPlan {
   projectId: string;
+  gcpProjectNumber: string;
   region: string;
   serviceName: string;
   collection: string;
@@ -17,6 +18,7 @@ export interface LiveGcpProofPlan {
   executionIdentity: GithubExecutionIdentity;
   wifProvider: string;
   wifServiceAccount: string;
+  observedWifPrincipal: string;
   mutationApproved: boolean;
   operation: OperationSpec;
 }
@@ -39,8 +41,8 @@ function validResourceLabel(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(value);
 }
 
-function validWifProvider(value: string): boolean {
-  return /^projects\/[1-9]\d*\/locations\/global\/workloadIdentityPools\/[A-Za-z0-9._-]+\/providers\/[A-Za-z0-9._-]+$/.test(value);
+function parseWifProviderProjectNumber(value: string): string | null {
+  return /^projects\/([1-9]\d*)\/locations\/global\/workloadIdentityPools\/[A-Za-z0-9._-]+\/providers\/[A-Za-z0-9._-]+$/.exec(value)?.[1] ?? null;
 }
 
 function validServiceAccount(value: string): boolean {
@@ -49,20 +51,31 @@ function validServiceAccount(value: string): boolean {
 
 export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan {
   const projectId = required(env, 'GCP_PROJECT_ID');
+  const gcpProjectNumber = required(env, 'PROOFFLEET_GCP_PROJECT_NUMBER');
   const region = required(env, 'GCP_REGION');
   const serviceName = required(env, 'PROOFFLEET_CLOUDRUN_SERVICE');
   const collection = required(env, 'PROOFFLEET_FIRESTORE_COLLECTION');
   const sourceRevision = requireExactGitRevision(required(env, 'PROOFFLEET_SOURCE_REVISION'));
   const wifProvider = required(env, 'GCP_WIF_PROVIDER');
   const wifServiceAccount = required(env, 'GCP_WIF_SERVICE_ACCOUNT');
+  const observedWifPrincipal = required(env, 'PROOFFLEET_WIF_PRINCIPAL');
   const confirmation = env.PROOFFLEET_LIVE_CONFIRMATION ?? '';
 
   if (!validProjectId(projectId)) throw new Error('GCP_PROJECT_ID is malformed');
+  if (!/^[1-9]\d*$/.test(gcpProjectNumber)) throw new Error('PROOFFLEET_GCP_PROJECT_NUMBER is malformed');
   if (!validRegion(region)) throw new Error('GCP_REGION is malformed');
   if (!validResourceLabel(serviceName)) throw new Error('PROOFFLEET_CLOUDRUN_SERVICE is malformed');
   if (!validResourceLabel(collection)) throw new Error('PROOFFLEET_FIRESTORE_COLLECTION is malformed');
-  if (!validWifProvider(wifProvider)) throw new Error('GCP_WIF_PROVIDER is malformed');
+  const providerProjectNumber = parseWifProviderProjectNumber(wifProvider);
+  if (!providerProjectNumber) throw new Error('GCP_WIF_PROVIDER is malformed');
+  if (providerProjectNumber !== gcpProjectNumber) {
+    throw new Error('WIF provider project number does not match authenticated Google project readback');
+  }
   if (!validServiceAccount(wifServiceAccount)) throw new Error('GCP_WIF_SERVICE_ACCOUNT is malformed');
+  if (!validServiceAccount(observedWifPrincipal)) throw new Error('PROOFFLEET_WIF_PRINCIPAL is malformed');
+  if (observedWifPrincipal !== wifServiceAccount) {
+    throw new Error('authenticated WIF principal does not match configured WIF service account');
+  }
 
   const executionIdentity = buildGithubExecutionIdentity(env, sourceRevision);
   const parameters = {
@@ -72,6 +85,8 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
     workflowRunId: executionIdentity.workflowRunId,
     workflowRunAttempt: executionIdentity.workflowRunAttempt,
     executionIdentityHash: executionIdentity.identityHash,
+    gcpProjectNumber,
+    observedWifPrincipal,
   };
   const parametersHash = sha256Hex(canonicalJson(parameters));
   const missionId = `gcp-live-${executionIdentity.workflowRunId}-${executionIdentity.workflowRunAttempt}`;
@@ -88,6 +103,7 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
 
   return {
     projectId,
+    gcpProjectNumber,
     region,
     serviceName,
     collection,
@@ -95,6 +111,7 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
     executionIdentity,
     wifProvider,
     wifServiceAccount,
+    observedWifPrincipal,
     mutationApproved: confirmation === LIVE_GCP_CONFIRMATION,
     operation: {
       operationId,
