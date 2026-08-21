@@ -41,21 +41,50 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+
       - name: Fail closed on missing live-proof configuration
         shell: bash
         run: |
           set -euo pipefail
-          required=(GCP_PROJECT_ID GCP_REGION GCP_WIF_PROVIDER GCP_WIF_SERVICE_ACCOUNT PROOFFLEET_CLOUDRUN_SERVICE PROOFFLEET_FIRESTORE_COLLECTION PROOFFLEET_GITHUB_RUN_ID PROOFFLEET_GITHUB_RUN_ATTEMPT PROOFFLEET_GITHUB_REPOSITORY_ID PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID PROOFFLEET_GITHUB_ACTOR_ID)
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GCP_WIF_PROVIDER
+            GCP_WIF_SERVICE_ACCOUNT
+            PROOFFLEET_CLOUDRUN_SERVICE
+            PROOFFLEET_FIRESTORE_COLLECTION
+            PROOFFLEET_GITHUB_RUN_ID
+            PROOFFLEET_GITHUB_RUN_ATTEMPT
+            PROOFFLEET_GITHUB_REPOSITORY_ID
+            PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID
+            PROOFFLEET_GITHUB_ACTOR_ID
+          )
           for key in "${required[@]}"; do
-            if test -z "${!key:-}"; then echo "Missing required live-proof value: ${key}" >&2; exit 2; fi
+            if test -z "${!key:-}"; then
+              echo "Missing required live-proof value: ${key}" >&2
+              exit 2
+            fi
           done
-          if test "$PROOFFLEET_LIVE_CONFIRMATION" != 'I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE'; then echo 'Exact live-proof confirmation phrase is required.' >&2; exit 2; fi
-          if ! printf '%s' "$GCP_WIF_PROVIDER" | grep -Eq '^projects/[0-9]+/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'; then echo 'GCP_WIF_PROVIDER is malformed.' >&2; exit 2; fi
-          if ! printf '%s' "$GCP_WIF_SERVICE_ACCOUNT" | grep -Eq '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$'; then echo 'GCP_WIF_SERVICE_ACCOUNT is malformed.' >&2; exit 2; fi
+          if test "$PROOFFLEET_LIVE_CONFIRMATION" != 'I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE'; then
+            echo 'Exact live-proof confirmation phrase is required.' >&2
+            exit 2
+          fi
+          if ! printf '%s' "$GCP_WIF_PROVIDER" | grep -Eq '^projects/[1-9][0-9]*/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'; then
+            echo 'GCP_WIF_PROVIDER is malformed.' >&2
+            exit 2
+          fi
+          if ! printf '%s' "$GCP_WIF_SERVICE_ACCOUNT" | grep -Eq '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$'; then
+            echo 'GCP_WIF_SERVICE_ACCOUNT is malformed.' >&2
+            exit 2
+          fi
           for key in PROOFFLEET_GITHUB_RUN_ID PROOFFLEET_GITHUB_RUN_ATTEMPT PROOFFLEET_GITHUB_REPOSITORY_ID PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID PROOFFLEET_GITHUB_ACTOR_ID; do
-            if ! printf '%s' "${!key}" | grep -Eq '^[1-9][0-9]*$'; then echo "Immutable GitHub identity ${key} is malformed." >&2; exit 2; fi
+            if ! printf '%s' "${!key}" | grep -Eq '^[1-9][0-9]*$'; then
+              echo "Immutable GitHub identity ${key} is malformed." >&2
+              exit 2
+            fi
           done
           test "$PROOFFLEET_SOURCE_REVISION" = "$GITHUB_SHA"
+
       - name: Authenticate to Google Cloud with Workload Identity Federation
         uses: google-github-actions/auth@v3
         with:
@@ -64,39 +93,65 @@ jobs:
           service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
+
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
+
       - name: Prove active federated credential principal and project
         shell: bash
         run: |
           set -euo pipefail
           ACTIVE_ACCOUNT="$(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
           ACTIVE_PROJECT="$(gcloud config get-value project 2>/dev/null)"
-          if test "$ACTIVE_ACCOUNT" != "$GCP_WIF_SERVICE_ACCOUNT"; then echo 'Active Google credential principal does not match the configured WIF service account.' >&2; exit 2; fi
-          if test "$ACTIVE_PROJECT" != "$GCP_PROJECT_ID"; then echo 'Active Google credential project does not match the configured project.' >&2; exit 2; fi
+          if test "$ACTIVE_ACCOUNT" != "$GCP_WIF_SERVICE_ACCOUNT"; then
+            echo 'Active Google credential principal does not match the configured WIF service account.' >&2
+            exit 2
+          fi
+          if test "$ACTIVE_PROJECT" != "$GCP_PROJECT_ID"; then
+            echo 'Active Google credential project does not match the configured project.' >&2
+            exit 2
+          fi
           PROJECT_NUMBER="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')"
-          if ! printf '%s' "$PROJECT_NUMBER" | grep -Eq '^[1-9][0-9]*$'; then echo 'Authenticated Google project-number readback is malformed.' >&2; exit 2; fi
+          if ! printf '%s' "$PROJECT_NUMBER" | grep -Eq '^[1-9][0-9]*$'; then
+            echo 'Authenticated Google project-number readback is malformed.' >&2
+            exit 2
+          fi
+          PROVIDER_PROJECT_NUMBER="$(printf '%s' "$GCP_WIF_PROVIDER" | sed -E 's#^projects/([0-9]+)/.*#\1#')"
+          if test "$PROJECT_NUMBER" != "$PROVIDER_PROJECT_NUMBER"; then
+            echo 'Authenticated Google project number does not match WIF provider project number.' >&2
+            exit 2
+          fi
           printf 'PROOFFLEET_WIF_PRINCIPAL=%s\n' "$ACTIVE_ACCOUNT" >> "$GITHUB_ENV"
           printf 'PROOFFLEET_GCP_PROJECT_NUMBER=%s\n' "$PROJECT_NUMBER" >> "$GITHUB_ENV"
           echo '[wif-evidence] active credential principal and project identity observed through authenticated gcloud readback'
+
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
+
       - name: Install immutable dependency graph
         run: npm ci --no-audit --no-fund
+
       - name: Run authoritative Cloud Run + Firestore proof
         run: npx tsx scripts/gcp-live-proof.ts
+
       - name: Publish receipt to job summary
         if: always()
         shell: bash
         run: |
           if test -f gcp-live-proof-receipt.json; then
-            { echo '### ProofFleet live GCP proof receipt'; echo '```json'; cat gcp-live-proof-receipt.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo '### ProofFleet live GCP proof receipt'
+              echo '```json'
+              cat gcp-live-proof-receipt.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
+
       - name: Upload live proof receipt
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,8 +160,33 @@ jobs:
           path: gcp-live-proof-receipt.json
           if-no-files-found: ignore
           retention-days: 30
-      - name: Require observed live proof
+
+      - name: Require observed credential-bound live proof
         shell: bash
         run: |
           set -euo pipefail
-          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('gcp-live-proof-receipt.json','utf8'));if(r.outcome!=='OBSERVED'||r.schemaVersion!=='prooffleet.gcp-live-proof.v2'){console.error(r.reason);process.exit(2)};console.log('OBSERVED live GCP proof for',r.sourceRevision)"
+          node <<'NODE'
+          const fs = require('fs');
+          const r = JSON.parse(fs.readFileSync('gcp-live-proof-receipt.json', 'utf8'));
+          if (r.schemaVersion !== 'prooffleet.gcp-live-proof.v3') {
+            console.error('live-proof receipt schema mismatch');
+            process.exit(2);
+          }
+          if (r.outcome !== 'OBSERVED') {
+            console.error(r.reason);
+            process.exit(2);
+          }
+          if (!/^[a-f0-9]{64}$/.test(String(r.executionCredentialBindingHash || ''))) {
+            console.error('execution/credential binding hash missing or malformed');
+            process.exit(2);
+          }
+          if (!/^[a-f0-9]{64}$/.test(String(r.receiptHash || ''))) {
+            console.error('live-proof receipt hash missing or malformed');
+            process.exit(2);
+          }
+          if (r.authenticatedGcpIdentity?.principal !== process.env.GCP_WIF_SERVICE_ACCOUNT) {
+            console.error('receipt principal does not match configured WIF service account');
+            process.exit(2);
+          }
+          console.log('OBSERVED credential-bound live GCP proof for', r.sourceRevision);
+          NODE
