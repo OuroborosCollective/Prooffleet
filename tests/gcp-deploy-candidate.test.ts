@@ -53,19 +53,32 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain('push: true');
     expect(workflow).toContain(':${{ env.EXPECTED_SOURCE_REVISION }}');
     expect(workflow).toContain("'^sha256:[0-9a-f]{64}$'");
-    expect(workflow).toContain('@${{ steps.build.outputs.digest }}');
+    expect(workflow).toContain('IMMUTABLE_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}@${IMAGE_DIGEST}"');
+    expect(workflow).toContain('--image="$IMMUTABLE_IMAGE"');
   });
 
   it('derives a unique tagged URL from the exact source SHA while keeping normal traffic at zero', () => {
     expect(workflow).toContain('CANDIDATE_TAG="pf-${EXPECTED_SOURCE_REVISION:0:12}"');
     expect(workflow).toContain('echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"');
-    expect(workflow).toContain('tag: ${{ steps.identity.outputs.candidate_tag }}');
-    expect(workflow).toContain('no_traffic: true');
+    expect(workflow).toContain('gcloud run deploy "$PROOFFLEET_CLOUDRUN_SERVICE"');
+    expect(workflow).toContain('--tag="$CANDIDATE_TAG"');
+    expect(workflow).toContain('--no-traffic');
+    expect(workflow).toContain('--container=app-container');
     expect(workflow).toContain('candidate revision unexpectedly receives ${percent}% normal traffic');
     expect(workflow).toContain('candidate tag URL missing for ${candidateTag}');
     expect(workflow).not.toContain('revision_traffic:');
     expect(workflow).not.toContain('tag_traffic:');
     expect(workflow).not.toContain('LATEST=100');
+  });
+
+  it('selects the candidate deterministically by source SHA, candidate marker and current image digest', () => {
+    expect(workflow).toContain('gcloud run revisions list');
+    expect(workflow).toContain("labels['prooffleet-source-sha'] === expectedSha");
+    expect(workflow).toContain("String(labels['prooffleet-candidate']) === 'true'");
+    expect(workflow).toContain('image.includes(`@${expectedDigest}`)');
+    expect(workflow).toContain('matches.length !== 1');
+    expect(workflow).toContain('Expected exactly one digest- and source-bound candidate revision');
+    expect(workflow).not.toContain('status?.latestCreatedRevisionName');
   });
 
   it('requires provider Ready state, revision labels and an exact tagged HTTP health smoke before promotion', () => {
@@ -96,8 +109,7 @@ describe('GCP candidate deploy safety contract', () => {
   });
 
   it('merges only the exact source revision into upstream environment instead of replacing AI Studio config', () => {
-    expect(workflow).toContain('PROOFFLEET_SOURCE_REVISION=${{ env.EXPECTED_SOURCE_REVISION }}');
-    expect(workflow).toContain('env_vars_update_strategy: merge');
+    expect(workflow).toContain('--update-env-vars="PROOFFLEET_SOURCE_REVISION=$EXPECTED_SOURCE_REVISION"');
     expect(workflow).toContain('env-names-before.txt');
     expect(workflow).toContain('upstream environment variable disappeared during merge deploy');
   });

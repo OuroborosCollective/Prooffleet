@@ -32,7 +32,9 @@ describe('GCP candidate deployment target binding', () => {
     expect(workflow).toContain('workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}');
     expect(workflow).toContain('service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}');
     expect(workflow).not.toContain('credentials_json');
-    expect(workflow).toContain('no_traffic: true');
+    expect(workflow).toContain('gcloud run deploy "$PROOFFLEET_CLOUDRUN_SERVICE"');
+    expect(workflow).toContain('--no-traffic');
+    expect(workflow).toContain('--tag="$CANDIDATE_TAG"');
     expect(workflow).not.toContain('LATEST=100');
   });
 });
