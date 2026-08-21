@@ -200,27 +200,69 @@ jobs:
           tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.PROOFFLEET_ARTIFACT_REPOSITORY }}/${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}:${{ env.EXPECTED_SOURCE_REVISION }}
           provenance: mode=max
 
-      - name: Require immutable image digest
+      - name: Require immutable image index digest
         shell: bash
         env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_INDEX_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          if ! printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-            echo "Build did not return an immutable sha256 digest: $IMAGE_DIGEST" >&2
+          if ! printf '%s' "$IMAGE_INDEX_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Build did not return an immutable sha256 index digest: $IMAGE_INDEX_DIGEST" >&2
             exit 2
           fi
-          echo "image_digest=$IMAGE_DIGEST"
+          echo "image_index_digest=$IMAGE_INDEX_DIGEST"
+
+      - name: Resolve exact linux amd64 runtime manifest from immutable index
+        id: registry
+        shell: bash
+        env:
+          IMAGE_INDEX_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          IMAGE_REPOSITORY="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}"
+          INDEX_JSON="$RUNNER_TEMP/candidate-image-index.json"
+          docker buildx imagetools inspect "${IMAGE_REPOSITORY}@${IMAGE_INDEX_DIGEST}" --raw > "$INDEX_JSON"
+
+          node - "$INDEX_JSON" "$IMAGE_INDEX_DIGEST" "$GITHUB_OUTPUT" <<'NODE'
+          const fs = require('fs');
+          const { createHash } = require('crypto');
+          const [indexPath, expectedIndexDigest, outputPath] = process.argv.slice(2);
+          const raw = fs.readFileSync(indexPath);
+          const observedIndexDigest = `sha256:${createHash('sha256').update(raw).digest('hex')}`;
+          if (observedIndexDigest !== expectedIndexDigest) {
+            throw new Error(`registry index digest mismatch: expected ${expectedIndexDigest}, got ${observedIndexDigest}`);
+          }
+          const index = JSON.parse(raw.toString('utf8'));
+          if (!Array.isArray(index.manifests) || index.manifests.length === 0) {
+            throw new Error('immutable image digest did not resolve to a manifest index');
+          }
+          const runtimeCandidates = index.manifests.filter((descriptor) => {
+            const platform = descriptor?.platform || {};
+            const digest = String(descriptor?.digest || '');
+            const mediaType = String(descriptor?.mediaType || '');
+            const supportedManifest = mediaType === 'application/vnd.oci.image.manifest.v1+json' ||
+              mediaType === 'application/vnd.docker.distribution.manifest.v2+json';
+            return platform.os === 'linux' && platform.architecture === 'amd64' &&
+              supportedManifest && /^sha256:[0-9a-f]{64}$/.test(digest);
+          });
+          if (runtimeCandidates.length !== 1) {
+            throw new Error(`expected exactly one linux/amd64 runtime manifest in immutable index, got ${runtimeCandidates.length}`);
+          }
+          const runtimeImageDigest = String(runtimeCandidates[0].digest);
+          fs.appendFileSync(outputPath, `image_index_digest=${expectedIndexDigest}\n`);
+          fs.appendFileSync(outputPath, `runtime_image_digest=${runtimeImageDigest}\n`);
+          console.log(`[candidate-image] immutable index ${expectedIndexDigest} proves linux/amd64 runtime manifest ${runtimeImageDigest}`);
+          NODE
 
       - name: Deploy tagged candidate revision with zero normal traffic
         id: deploy
         shell: bash
         env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_INDEX_DIGEST: ${{ steps.registry.outputs.image_index_digest }}
           CANDIDATE_TAG: ${{ steps.identity.outputs.candidate_tag }}
         run: |
           set -euo pipefail
-          IMMUTABLE_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}@${IMAGE_DIGEST}"
+          IMMUTABLE_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}@${IMAGE_INDEX_DIGEST}"
           DEPLOY_JSON="$RUNNER_TEMP/cloudrun-deploy-result.json"
           gcloud run deploy "$PROOFFLEET_CLOUDRUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
@@ -234,9 +276,9 @@ jobs:
             --update-env-vars="PROOFFLEET_SOURCE_REVISION=$EXPECTED_SOURCE_REVISION" \
             > "$DEPLOY_JSON"
 
-          node - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" <<'NODE'
+          node - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_INDEX_DIGEST" <<'NODE'
           const fs = require('fs');
-          const [deployPath, expectedSha, expectedDigest] = process.argv.slice(2);
+          const [deployPath, expectedSha, expectedIndexDigest] = process.argv.slice(2);
           const deployed = JSON.parse(fs.readFileSync(deployPath, 'utf8'));
           const revision = String(deployed.spec?.template?.metadata?.name || '');
           if (!revision) throw new Error('direct deploy response did not identify the created revision');
@@ -245,7 +287,7 @@ jobs:
           if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('direct deploy response candidate marker missing');
           const container = deployed.spec?.template?.spec?.containers?.[0] || {};
           const image = String(container.image || '');
-          if (!image.includes(`@${expectedDigest}`)) throw new Error('direct deploy response image digest mismatch');
+          if (!image.includes(`@${expectedIndexDigest}`)) throw new Error('direct deploy response image index digest mismatch');
           const env = Array.isArray(container.env) ? container.env : [];
           const source = env.find((entry) => entry.name === 'PROOFFLEET_SOURCE_REVISION')?.value || '';
           if (source !== expectedSha) throw new Error('direct deploy response source env mismatch');
@@ -255,7 +297,8 @@ jobs:
       - name: Authoritative candidate revision readback
         shell: bash
         env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_INDEX_DIGEST: ${{ steps.registry.outputs.image_index_digest }}
+          RUNTIME_IMAGE_DIGEST: ${{ steps.registry.outputs.runtime_image_digest }}
           CANDIDATE_TAG: ${{ steps.identity.outputs.candidate_tag }}
         run: |
           set -euo pipefail
@@ -267,13 +310,17 @@ jobs:
             echo 'Direct deploy response is missing; refusing to guess candidate revision identity.' >&2
             exit 2
           fi
+          if ! printf '%s' "$RUNTIME_IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Resolved runtime image digest is malformed: $RUNTIME_IMAGE_DIGEST" >&2
+            exit 2
+          fi
 
           gcloud run services describe "$PROOFFLEET_CLOUDRUN_SERVICE" \
             --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$SERVICE_JSON"
 
-          REVISION="$(node - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" <<'NODE'
+          REVISION="$(node - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_INDEX_DIGEST" <<'NODE'
           const fs = require('fs');
-          const [deployPath, expectedSha, expectedDigest] = process.argv.slice(2);
+          const [deployPath, expectedSha, expectedIndexDigest] = process.argv.slice(2);
           const deployed = JSON.parse(fs.readFileSync(deployPath, 'utf8'));
           const revision = String(deployed.spec?.template?.metadata?.name || '');
           if (!revision) throw new Error('direct deploy response did not identify the created revision');
@@ -282,7 +329,7 @@ jobs:
           if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('direct deploy response candidate marker missing');
           const container = deployed.spec?.template?.spec?.containers?.[0] || {};
           const image = String(container.image || '');
-          if (!image.includes(`@${expectedDigest}`)) throw new Error('direct deploy response image digest mismatch');
+          if (!image.includes(`@${expectedIndexDigest}`)) throw new Error('direct deploy response image index digest mismatch');
           process.stdout.write(revision);
           NODE
           )"
@@ -290,9 +337,9 @@ jobs:
           gcloud run revisions describe "$REVISION" \
             --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$REVISION_JSON"
 
-          node - "$SERVICE_JSON" "$REVISION_JSON" "$RUNNER_TEMP/runtime-sa-before.txt" "$RUNNER_TEMP/env-names-before.txt" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" "$CANDIDATE_TAG" <<'NODE'
+          node - "$SERVICE_JSON" "$REVISION_JSON" "$RUNNER_TEMP/runtime-sa-before.txt" "$RUNNER_TEMP/env-names-before.txt" "$EXPECTED_SOURCE_REVISION" "$IMAGE_INDEX_DIGEST" "$RUNTIME_IMAGE_DIGEST" "$CANDIDATE_TAG" <<'NODE'
           const fs = require('fs');
-          const [servicePath, revisionPath, runtimeSaPath, envNamesPath, expectedSha, expectedDigest, candidateTag] = process.argv.slice(2);
+          const [servicePath, revisionPath, runtimeSaPath, envNamesPath, expectedSha, expectedIndexDigest, expectedRuntimeDigest, candidateTag] = process.argv.slice(2);
           const service = JSON.parse(fs.readFileSync(servicePath, 'utf8'));
           const revision = JSON.parse(fs.readFileSync(revisionPath, 'utf8'));
           const runtimeBefore = fs.readFileSync(runtimeSaPath, 'utf8').trim();
@@ -310,7 +357,10 @@ jobs:
           }
 
           const image = String(container.image || '');
-          if (!image.includes(`@${expectedDigest}`)) throw new Error(`revision image is not bound to expected digest ${expectedDigest}: ${image}`);
+          const expectedRuntimeImage = `${process.env.GCP_REGION}-docker.pkg.dev/${process.env.GCP_PROJECT_ID}/${process.env.PROOFFLEET_ARTIFACT_REPOSITORY}/${process.env.PROOFFLEET_CLOUDRUN_SERVICE}@${expectedRuntimeDigest}`;
+          if (image !== expectedRuntimeImage) {
+            throw new Error(`revision image is not the registry-proven linux/amd64 manifest ${expectedRuntimeDigest}: ${image}`);
+          }
 
           const ready = Array.isArray(revision.status?.conditions)
             ? revision.status.conditions.some((c) => c.type === 'Ready' && String(c.status).toLowerCase() === 'true')
@@ -331,14 +381,18 @@ jobs:
           if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('candidate revision marker label missing');
 
           const receipt = {
-            schemaVersion: 'prooffleet.gcp-deploy-candidate.v1',
+            schemaVersion: 'prooffleet.gcp-deploy-candidate.v2',
             outcome: 'OBSERVED_NO_TRAFFIC_CANDIDATE',
             projectId: process.env.GCP_PROJECT_ID,
             region: process.env.GCP_REGION,
             service: process.env.PROOFFLEET_CLOUDRUN_SERVICE,
             sourceRevision: expectedSha,
             revisionName: revision.metadata?.name || null,
-            imageDigest: expectedDigest,
+            imageDigest: expectedRuntimeDigest,
+            imageIndexDigest: expectedIndexDigest,
+            runtimeImageDigest: expectedRuntimeDigest,
+            runtimePlatform: 'linux/amd64',
+            imageIndexToRuntimeManifestVerified: true,
             runtimeServiceAccount: runtimeAfter,
             priorEnvironmentNamesPreserved: true,
             providerReady: true,

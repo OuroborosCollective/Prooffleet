@@ -48,13 +48,26 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).not.toContain('GOOGLE_APPLICATION_CREDENTIALS=');
   });
 
-  it('builds an immutable source-SHA-tagged image and requires a sha256 registry digest', () => {
+  it('builds an immutable source-SHA-tagged image and requires a sha256 OCI index digest', () => {
     expect(workflow).toContain('docker/build-push-action@v6');
     expect(workflow).toContain('push: true');
     expect(workflow).toContain(':${{ env.EXPECTED_SOURCE_REVISION }}');
     expect(workflow).toContain("'^sha256:[0-9a-f]{64}$'");
-    expect(workflow).toContain('IMMUTABLE_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}@${IMAGE_DIGEST}"');
+    expect(workflow).toContain('IMAGE_INDEX_DIGEST: ${{ steps.build.outputs.digest }}');
+    expect(workflow).toContain('IMMUTABLE_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}@${IMAGE_INDEX_DIGEST}"');
     expect(workflow).toContain('--image="$IMMUTABLE_IMAGE"');
+  });
+
+  it('proves the immutable OCI index and resolves exactly one linux/amd64 runtime child manifest', () => {
+    expect(workflow).toContain('Resolve exact linux amd64 runtime manifest from immutable index');
+    expect(workflow).toContain('docker buildx imagetools inspect "${IMAGE_REPOSITORY}@${IMAGE_INDEX_DIGEST}" --raw > "$INDEX_JSON"');
+    expect(workflow).toContain("const { createHash } = require('crypto')");
+    expect(workflow).toContain("createHash('sha256').update(raw).digest('hex')");
+    expect(workflow).toContain('observedIndexDigest !== expectedIndexDigest');
+    expect(workflow).toContain("platform.os === 'linux' && platform.architecture === 'amd64'");
+    expect(workflow).toContain('runtimeCandidates.length !== 1');
+    expect(workflow).toContain('runtime_image_digest=${runtimeImageDigest}');
+    expect(workflow).toContain('image_index_digest=${expectedIndexDigest}');
   });
 
   it('derives a unique tagged URL from the exact source SHA while keeping normal traffic at zero', () => {
@@ -77,11 +90,19 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain("const revision = String(deployed.spec?.template?.metadata?.name || '')");
     expect(workflow).toContain("labels['prooffleet-source-sha'] !== expectedSha");
     expect(workflow).toContain("String(labels['prooffleet-candidate']) !== 'true'");
-    expect(workflow).toContain('image.includes(`@${expectedDigest}`)');
+    expect(workflow).toContain('image.includes(`@${expectedIndexDigest}`)');
     expect(workflow).toContain('direct deploy response source env mismatch');
     expect(workflow).toContain('gcloud run revisions describe "$REVISION"');
     expect(workflow).not.toContain('gcloud run revisions list');
     expect(workflow).not.toContain('status?.latestCreatedRevisionName');
+  });
+
+  it('requires Cloud Run to resolve exactly the registry-proven runtime child digest', () => {
+    expect(workflow).toContain('RUNTIME_IMAGE_DIGEST: ${{ steps.registry.outputs.runtime_image_digest }}');
+    expect(workflow).toContain('IMAGE_INDEX_DIGEST: ${{ steps.registry.outputs.image_index_digest }}');
+    expect(workflow).toContain('const expectedRuntimeImage = `${process.env.GCP_REGION}-docker.pkg.dev/${process.env.GCP_PROJECT_ID}/${process.env.PROOFFLEET_ARTIFACT_REPOSITORY}/${process.env.PROOFFLEET_CLOUDRUN_SERVICE}@${expectedRuntimeDigest}`');
+    expect(workflow).toContain('image !== expectedRuntimeImage');
+    expect(workflow).toContain('registry-proven linux/amd64 manifest');
   });
 
   it('never prints the full deploy response that may contain inherited environment values', () => {
@@ -132,8 +153,14 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).not.toContain('511695074775-compute@developer.gserviceaccount.com');
   });
 
-  it('produces a receipt that cannot claim a promotable candidate before HTTP health or ADK canary evidence is observed', () => {
+  it('produces a v2 receipt with index-to-runtime-manifest evidence before HTTP or ADK observation', () => {
+    expect(workflow).toContain("schemaVersion: 'prooffleet.gcp-deploy-candidate.v2'");
     expect(workflow).toContain("outcome: 'OBSERVED_NO_TRAFFIC_CANDIDATE'");
+    expect(workflow).toContain('imageDigest: expectedRuntimeDigest');
+    expect(workflow).toContain('imageIndexDigest: expectedIndexDigest');
+    expect(workflow).toContain('runtimeImageDigest: expectedRuntimeDigest');
+    expect(workflow).toContain("runtimePlatform: 'linux/amd64'");
+    expect(workflow).toContain('imageIndexToRuntimeManifestVerified: true');
     expect(workflow).toContain('providerReady: true');
     expect(workflow).toContain('httpHealthObserved: false');
     expect(workflow).toContain('adkCanaryEligible: false');
