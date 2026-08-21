@@ -103,6 +103,14 @@ jobs:
           IMAGE="prooffleet-ci:${GITHUB_SHA}"
           NAME="prooffleet-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker build --tag "$IMAGE" .
+          RUNTIME_IMAGE_ID="$(docker image inspect "$IMAGE" --format='{{.Id}}')"
+          if ! printf '%s' "$RUNTIME_IMAGE_ID" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Docker runtime image identity is malformed: $RUNTIME_IMAGE_ID" >&2
+            exit 2
+          fi
+          echo "CI_RUNTIME_IMAGE_ID=$RUNTIME_IMAGE_ID" >> "$GITHUB_ENV"
+          echo "runtime_image_id=$RUNTIME_IMAGE_ID"
+
           docker run --detach --name "$NAME" --env PORT=8080 --publish 127.0.0.1:3188:8080 "$IMAGE" >/dev/null
           cleanup() {
             docker logs "$NAME" || true
@@ -125,12 +133,14 @@ jobs:
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/prooffleet-container-health.json','utf8'));if(!j||typeof j!=='object')process.exit(2);console.log('[container-smoke] health readback received')"
           echo '[container-smoke] exact Docker image passed HTTP runtime smoke on PORT=8080'
 
-      - name: Record source and tested revision identities
+      - name: Record source, runtime and immutable execution identities
         shell: bash
         env:
           CI_EVENT_NAME: ${{ github.event_name }}
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           CI_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_EXPECTED_REPOSITORY_ID: '1339097875'
+          CI_EXPECTED_OWNER_ID: '266194342'
         run: |
           set -euo pipefail
           node scripts/ci-revision-receipt.mjs > ci-revision-receipt.json
@@ -141,6 +151,57 @@ jobs:
             cat ci-revision-receipt.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload revision receipt artifact
+        id: revision_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prooffleet-ci-revision-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-revision-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Bind uploaded artifact id and digest to the exact CI receipt
+        shell: bash
+        env:
+          REVISION_ARTIFACT_ID: ${{ steps.revision_artifact.outputs.artifact-id }}
+          REVISION_ARTIFACT_DIGEST: ${{ steps.revision_artifact.outputs.artifact-digest }}
+          REVISION_ARTIFACT_NAME: prooffleet-ci-revision-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { buildArtifactBinding } from './scripts/authority-evidence.mjs';
+
+          const receipt = JSON.parse(fs.readFileSync('ci-revision-receipt.json', 'utf8'));
+          const binding = buildArtifactBinding({
+            executionIdentity: receipt.githubExecution,
+            receiptHash: receipt.receiptHash,
+            artifactName: process.env.REVISION_ARTIFACT_NAME,
+            artifactId: process.env.REVISION_ARTIFACT_ID,
+            artifactDigest: process.env.REVISION_ARTIFACT_DIGEST,
+          });
+          fs.writeFileSync(
+            'ci-revision-artifact-binding.json',
+            JSON.stringify(binding, null, 2) + '\n',
+            'utf8',
+          );
+          console.log(`[ci-artifact-binding] artifact_id=${binding.artifactId} artifact_digest=${binding.artifactDigest} binding_hash=${binding.bindingHash}`);
+          NODE
+          {
+            echo '### ProofFleet CI artifact binding'
+            echo '```json'
+            cat ci-revision-artifact-binding.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload revision artifact binding
+        uses: actions/upload-artifact@v4
+        with:
+          name: prooffleet-ci-revision-binding-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-revision-artifact-binding.json
+          if-no-files-found: error
+          retention-days: 30
 
   dependency-audit:
     name: dependency-audit
@@ -178,6 +239,7 @@ jobs:
 # - Every verification run with a committed lock uses `npm ci`.
 # - Runtime truth lives in `npm run verify:ci` plus an exact Docker-image HTTP
 #   smoke on the Cloud Run PORT contract; workflow YAML alone is not evidence.
-# - Pull-request verification deliberately tests GitHub's checked-out merge
-#   candidate while recording the PR source head separately. Neither identity
-#   may be labeled as the other.
+# - CI receipts bind source/merge identities to immutable GitHub numeric IDs,
+#   run ID/attempt, a hashed runner identity, the exact Docker image ID, and a
+#   GitHub artifact ID/digest binding. Mutable actor names or workflow paths are
+#   descriptive context only and cannot satisfy the evidence identity contract.
