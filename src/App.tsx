@@ -177,21 +177,35 @@ export default function App() {
     thinkingLevel: Mission["thinkingLevel"];
     requireConsentForWrite: boolean;
   }) => {
+    setOperatorAuthError(null);
     try {
-      setVerificationResult(null);
       const res = await fetch("/api/fleet/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ProofFleet-Mission-Intent": "1",
+        },
+        credentials: "same-origin",
         body: JSON.stringify(params),
       });
 
       const data = await res.json();
-      if (data.success && data.mission) {
-        setActiveMission(data.mission);
-        fetchFleetData();
+      if (!res.ok || data.success !== true || !data.mission) {
+        if (res.status === 401) {
+          setOperatorSession((prev) => ({ ...prev, authenticated: false, identity: null }));
+        } else if (res.status === 503) {
+          setOperatorSession({ configured: false, authenticated: false, identity: null });
+        }
+        setOperatorAuthError(data.error || "Mission start failed closed.");
+        return;
       }
+
+      setVerificationResult(null);
+      setActiveMission(data.mission);
+      void fetchFleetData();
     } catch (err) {
       console.error("Failed to run mission:", err);
+      setOperatorAuthError("Mission start request failed.");
     }
   };
 

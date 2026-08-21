@@ -57,10 +57,14 @@ function extractCookiePair(setCookie) {
   return setCookie.split(';', 1)[0];
 }
 
-async function startMission(title, inputGoal) {
+async function startMission(title, inputGoal, cookie) {
   const result = await fetchJson('/api/fleet/run', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-prooffleet-mission-intent': '1',
+      cookie,
+    },
     body: JSON.stringify({
       title,
       inputGoal,
@@ -129,25 +133,30 @@ async function main() {
       throw new Error('configured operator must begin unauthenticated');
     }
 
-    const rejectMission = await startMission(
-      'CI consent rejection path',
-      'Create a bounded proof effect that requires explicit operator consent.',
-    );
-    const rejectRequest = await waitForPendingConsent();
-    if (rejectRequest.missionId !== rejectMission.id) {
-      throw new Error('pending consent request is not bound to the started mission');
+    const missingMissionIntent = await fetchJson('/api/fleet/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'must not run', inputGoal: 'must not run' }),
+    });
+    if (missingMissionIntent.response.status !== 403) {
+      throw new Error(`mission start without explicit intent expected 403, got ${missingMissionIntent.response.status}`);
     }
 
-    const unauthenticatedDecision = await fetchJson('/api/consent/respond', {
+    const unauthenticatedMission = await fetchJson('/api/fleet/run', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-prooffleet-consent-intent': '1',
+        'x-prooffleet-mission-intent': '1',
       },
-      body: JSON.stringify({ requestId: rejectRequest.requestId, decision: 'REJECTED' }),
+      body: JSON.stringify({ title: 'must not run', inputGoal: 'must not run' }),
     });
-    if (unauthenticatedDecision.response.status !== 401) {
-      throw new Error(`configured consent without session expected 401, got ${unauthenticatedDecision.response.status}`);
+    if (unauthenticatedMission.response.status !== 401) {
+      throw new Error(`mission start without operator session expected 401, got ${unauthenticatedMission.response.status}`);
+    }
+
+    const beforeLoginMission = await fetchJson('/api/fleet/active-mission');
+    if (beforeLoginMission.body?.mission !== null) {
+      throw new Error('unauthorized mission attempts mutated active mission state');
     }
 
     const badLogin = await fetchJson('/api/operator/session', {
@@ -180,6 +189,28 @@ async function main() {
       throw new Error('issued operator session did not authenticate server-side identity');
     }
 
+    const rejectMission = await startMission(
+      'CI consent rejection path',
+      'Create a bounded proof effect that requires explicit operator consent.',
+      cookie,
+    );
+    const rejectRequest = await waitForPendingConsent();
+    if (rejectRequest.missionId !== rejectMission.id) {
+      throw new Error('pending consent request is not bound to the started mission');
+    }
+
+    const unauthenticatedDecision = await fetchJson('/api/consent/respond', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-prooffleet-consent-intent': '1',
+      },
+      body: JSON.stringify({ requestId: rejectRequest.requestId, decision: 'REJECTED' }),
+    });
+    if (unauthenticatedDecision.response.status !== 401) {
+      throw new Error(`configured consent without session expected 401, got ${unauthenticatedDecision.response.status}`);
+    }
+
     const rejected = await respondToConsent({
       requestId: rejectRequest.requestId,
       decision: 'REJECTED',
@@ -201,6 +232,7 @@ async function main() {
     const approveMission = await startMission(
       'CI consent approval without cloud executor',
       'Attempt the same bounded proof effect with explicit approval but no provisioned Firestore target.',
+      cookie,
     );
     const approveRequest = await waitForPendingConsent(new Set([rejectRequest.requestId]));
     if (approveRequest.missionId !== approveMission.id) {
@@ -231,7 +263,7 @@ async function main() {
       throw new Error('active mission readback does not match approved-but-unprovisioned outcome');
     }
 
-    console.log('[consent-http-e2e] authenticated consent production E2E passed');
+    console.log('[consent-http-e2e] authenticated mission and consent production E2E passed');
   } finally {
     child.kill('SIGTERM');
     await new Promise((resolve) => {

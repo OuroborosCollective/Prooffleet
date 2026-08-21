@@ -96,8 +96,22 @@ async function startServer() {
     res.json({ mission });
   });
 
-  // Trigger New Mission
+  // Starting a mission can mutate fleet/evidence/consent state and may spend
+  // configured Gemini capacity. Require explicit intent and the same
+  // authenticated operator session before startMission can be reached.
   app.post("/api/fleet/run", async (req, res) => {
+    if (req.get("x-prooffleet-mission-intent") !== "1") {
+      return res.status(403).json({ error: "mission intent header required" });
+    }
+
+    const operator = operatorSessions.authenticate(req.headers.cookie);
+    if (!operator.configured) {
+      return res.status(503).json({ error: "operator authentication is not provisioned" });
+    }
+    if (!operator.authenticated || !operator.identity) {
+      return res.status(401).json({ error: "authenticated operator session required" });
+    }
+
     try {
       const { title, inputGoal, presetKey, strictness, thinkingLevel, requireConsentForWrite } = req.body;
       const mission = await fleetRunner.startMission(
