@@ -5,6 +5,7 @@ import { buildRevisionReceipt } from '../scripts/ci-revision-receipt.mjs';
 const SOURCE = '1'.repeat(40);
 const BASE = '2'.repeat(40);
 const MERGE = '3'.repeat(40);
+const RUNTIME_IMAGE_ID = `sha256:${'4'.repeat(64)}`;
 
 function githubEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -28,6 +29,7 @@ describe('CI revision receipt', () => {
       checkedOutSha: MERGE,
       pullRequestHeadSha: SOURCE,
       pullRequestBaseSha: BASE,
+      runtimeImageId: RUNTIME_IMAGE_ID,
       githubEnvironment: githubEnvironment(),
       expectedRepositoryId: '1339097875',
       expectedOwnerId: '266194342',
@@ -40,6 +42,7 @@ describe('CI revision receipt', () => {
       baseSha: BASE,
       testedCheckoutSha: MERGE,
       testedMergeSha: MERGE,
+      runtimeImageId: RUNTIME_IMAGE_ID,
       githubExecution: {
         schemaVersion: 'prooffleet.github-execution-identity.v1',
         sourceRevision: MERGE,
@@ -60,6 +63,7 @@ describe('CI revision receipt', () => {
       eventName: 'push',
       githubSha: SOURCE,
       checkedOutSha: SOURCE,
+      runtimeImageId: RUNTIME_IMAGE_ID,
       githubEnvironment: githubEnvironment(),
     });
 
@@ -75,6 +79,7 @@ describe('CI revision receipt', () => {
       eventName: 'push',
       githubSha: SOURCE,
       checkedOutSha: SOURCE,
+      runtimeImageId: RUNTIME_IMAGE_ID,
       githubEnvironment: githubEnvironment({
         GITHUB_ACTOR: 'old-name',
         GITHUB_WORKFLOW: 'Old Workflow Path',
@@ -84,6 +89,7 @@ describe('CI revision receipt', () => {
       eventName: 'push',
       githubSha: SOURCE,
       checkedOutSha: SOURCE,
+      runtimeImageId: RUNTIME_IMAGE_ID,
       githubEnvironment: githubEnvironment({
         GITHUB_ACTOR: 'renamed-user',
         GITHUB_WORKFLOW: 'Moved Workflow Path',
@@ -102,12 +108,13 @@ describe('CI revision receipt', () => {
         checkedOutSha: SOURCE,
         pullRequestHeadSha: SOURCE,
         pullRequestBaseSha: BASE,
+        runtimeImageId: RUNTIME_IMAGE_ID,
         githubEnvironment: githubEnvironment(),
       }),
     ).toThrow(/does not match workflow GITHUB_SHA/);
   });
 
-  it('fails closed on malformed revision or immutable GitHub identities', () => {
+  it('fails closed on malformed revision, runtime image or immutable GitHub identities', () => {
     expect(() =>
       buildRevisionReceipt({
         eventName: 'pull_request',
@@ -115,6 +122,7 @@ describe('CI revision receipt', () => {
         checkedOutSha: MERGE,
         pullRequestHeadSha: 'not-a-sha',
         pullRequestBaseSha: BASE,
+        runtimeImageId: RUNTIME_IMAGE_ID,
         githubEnvironment: githubEnvironment(),
       }),
     ).toThrow(/exact lowercase 40-character Git SHA/);
@@ -124,6 +132,17 @@ describe('CI revision receipt', () => {
         eventName: 'push',
         githubSha: SOURCE,
         checkedOutSha: SOURCE,
+        runtimeImageId: 'latest',
+        githubEnvironment: githubEnvironment(),
+      }),
+    ).toThrow(/immutable sha256 digest/);
+
+    expect(() =>
+      buildRevisionReceipt({
+        eventName: 'push',
+        githubSha: SOURCE,
+        checkedOutSha: SOURCE,
+        runtimeImageId: RUNTIME_IMAGE_ID,
         githubEnvironment: githubEnvironment({ GITHUB_REPOSITORY_ID: 'repo-name' }),
       }),
     ).toThrow(/positive numeric identity/);
@@ -134,6 +153,7 @@ describe('CI revision receipt', () => {
       eventName: 'push',
       githubSha: SOURCE,
       checkedOutSha: SOURCE,
+      runtimeImageId: RUNTIME_IMAGE_ID,
       githubEnvironment: githubEnvironment(),
       expectedRepositoryId: '1339097875',
       expectedOwnerId: '999',
@@ -146,6 +166,7 @@ describe('CI revision receipt', () => {
         eventName: 'workflow_dispatch',
         githubSha: SOURCE,
         checkedOutSha: SOURCE,
+        runtimeImageId: RUNTIME_IMAGE_ID,
         githubEnvironment: githubEnvironment(),
       }),
     ).toThrow(/unsupported CI event/);
