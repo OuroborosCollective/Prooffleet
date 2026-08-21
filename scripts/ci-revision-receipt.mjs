@@ -1,14 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const SHA40 = /^[0-9a-f]{40}$/;
-
-function requireSha(label, value) {
-  if (typeof value !== 'string' || !SHA40.test(value.trim())) {
-    throw new Error(`${label} must be an exact lowercase 40-character Git SHA`);
-  }
-  return value.trim();
-}
+import {
+  buildGitHubExecutionIdentity,
+  requireExactSha,
+  sealReceipt,
+} from './authority-evidence.mjs';
 
 /**
  * @param {{
@@ -17,6 +14,9 @@ function requireSha(label, value) {
  *   checkedOutSha: string,
  *   pullRequestHeadSha?: string,
  *   pullRequestBaseSha?: string,
+ *   githubEnvironment: NodeJS.ProcessEnv,
+ *   expectedRepositoryId?: string,
+ *   expectedOwnerId?: string,
  * }} input
  */
 export function buildRevisionReceipt({
@@ -25,9 +25,12 @@ export function buildRevisionReceipt({
   checkedOutSha,
   pullRequestHeadSha,
   pullRequestBaseSha,
+  githubEnvironment,
+  expectedRepositoryId,
+  expectedOwnerId,
 }) {
-  const testedCheckoutSha = requireSha('checkedOutSha', checkedOutSha);
-  const workflowSha = requireSha('githubSha', githubSha);
+  const testedCheckoutSha = requireExactSha('checkedOutSha', checkedOutSha);
+  const workflowSha = requireExactSha('githubSha', githubSha);
 
   if (testedCheckoutSha !== workflowSha) {
     throw new Error(
@@ -35,31 +38,37 @@ export function buildRevisionReceipt({
     );
   }
 
+  let sourceHeadSha;
+  let baseSha;
+  let testedMergeSha;
+
   if (eventName === 'pull_request') {
-    const sourceHeadSha = requireSha('pullRequestHeadSha', pullRequestHeadSha);
-    const baseSha = requireSha('pullRequestBaseSha', pullRequestBaseSha);
-    return {
-      schemaVersion: 'prooffleet.ci-revision-receipt.v1',
-      eventName,
-      sourceHeadSha,
-      baseSha,
-      testedCheckoutSha,
-      testedMergeSha: workflowSha,
-    };
+    sourceHeadSha = requireExactSha('pullRequestHeadSha', pullRequestHeadSha);
+    baseSha = requireExactSha('pullRequestBaseSha', pullRequestBaseSha);
+    testedMergeSha = workflowSha;
+  } else if (eventName === 'push') {
+    sourceHeadSha = workflowSha;
+    baseSha = null;
+    testedMergeSha = null;
+  } else {
+    throw new Error(`unsupported CI event: ${eventName}`);
   }
 
-  if (eventName === 'push') {
-    return {
-      schemaVersion: 'prooffleet.ci-revision-receipt.v1',
-      eventName,
-      sourceHeadSha: workflowSha,
-      baseSha: null,
-      testedCheckoutSha,
-      testedMergeSha: null,
-    };
-  }
+  const githubExecution = buildGitHubExecutionIdentity(githubEnvironment, {
+    sourceRevision: testedCheckoutSha,
+    expectedRepositoryId,
+    expectedOwnerId,
+  });
 
-  throw new Error(`unsupported CI event: ${eventName}`);
+  return sealReceipt({
+    schemaVersion: 'prooffleet.ci-revision-receipt.v2',
+    eventName,
+    sourceHeadSha,
+    baseSha,
+    testedCheckoutSha,
+    testedMergeSha,
+    githubExecution,
+  });
 }
 
 function currentCheckedOutSha() {
@@ -81,6 +90,9 @@ function runCli() {
     checkedOutSha: currentCheckedOutSha(),
     pullRequestHeadSha: process.env.CI_PR_HEAD_SHA,
     pullRequestBaseSha: process.env.CI_PR_BASE_SHA,
+    githubEnvironment: process.env,
+    expectedRepositoryId: process.env.CI_EXPECTED_REPOSITORY_ID,
+    expectedOwnerId: process.env.CI_EXPECTED_OWNER_ID,
   });
   process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
 }
