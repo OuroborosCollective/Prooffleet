@@ -10,11 +10,12 @@ const identity = {
   runId: '32517685281', runAttempt: '1', repositoryId: '1339097875',
   repositoryOwnerId: '266194342', actorId: '266194342',
   runnerEnvironment: 'github-hosted', runnerOs: 'Linux', runnerArch: 'X64',
+  runnerName: 'GitHub Actions 1000221664',
   containerImageId: IMAGE, healthReadbackSha256: HEALTH,
 };
 
 describe('CI revision receipt v2', () => {
-  it('binds source, tested merge, immutable IDs, runner and runtime readback', () => {
+  it('binds source, tested merge, immutable IDs, runner fingerprint and runtime readback', () => {
     const receipt = buildRevisionReceipt({ ...identity, eventName: 'pull_request', githubSha: MERGE,
       checkedOutSha: MERGE, pullRequestHeadSha: SOURCE, pullRequestBaseSha: BASE });
     expect(receipt.schemaVersion).toBe('prooffleet.ci-revision-receipt.v2');
@@ -23,9 +24,15 @@ describe('CI revision receipt v2', () => {
     expect(receipt.run.repositoryId).toBe(identity.repositoryId);
     expect(receipt.run.repositoryOwnerId).toBe(identity.repositoryOwnerId);
     expect(receipt.run.actorId).toBe(identity.actorId);
-    expect(receipt.runner).toEqual({ environment: 'github-hosted', os: 'Linux', arch: 'X64' });
+    expect(receipt.runner).toEqual({
+      environment: 'github-hosted',
+      os: 'Linux',
+      arch: 'X64',
+      nameSha256: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+    });
     expect(receipt.runtime).toEqual({ containerImageId: IMAGE, healthReadbackSha256: HEALTH });
     expect(receipt.evidenceIdentitySha256).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(JSON.stringify(receipt)).not.toContain(identity.runnerName);
   });
 
   it('records push verification as the source head directly', () => {
@@ -45,15 +52,20 @@ describe('CI revision receipt v2', () => {
     expect(() => buildRevisionReceipt({ ...identity, actorId: 'actor-name', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/positive decimal integer/);
   });
 
-  it('rejects malformed runtime hashes', () => {
+  it('rejects malformed runtime hashes and missing runner instance identity', () => {
     expect(() => buildRevisionReceipt({ ...identity, containerImageId: 'latest', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/exact sha256 digest/);
     expect(() => buildRevisionReceipt({ ...identity, healthReadbackSha256: 'healthy', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/exact sha256 digest/);
+    expect(() => buildRevisionReceipt({ ...identity, runnerName: '', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/runnerName/);
   });
 
-  it('changes evidence identity when run or runtime evidence changes', () => {
+  it('changes evidence identity when run, runner instance or runtime evidence changes', () => {
     const a = buildRevisionReceipt({ ...identity, eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
     const b = buildRevisionReceipt({ ...identity, runAttempt: '2', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
+    const c = buildRevisionReceipt({ ...identity, runnerName: 'GitHub Actions 1000221665', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
+    const d = buildRevisionReceipt({ ...identity, healthReadbackSha256: `sha256:${'6'.repeat(64)}`, eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
     expect(a.evidenceIdentitySha256).not.toBe(b.evidenceIdentitySha256);
+    expect(a.evidenceIdentitySha256).not.toBe(c.evidenceIdentitySha256);
+    expect(a.evidenceIdentitySha256).not.toBe(d.evidenceIdentitySha256);
   });
 
   it('rejects unsupported event families', () => {
