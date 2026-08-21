@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildGitHubExecutionIdentity,
   requireExactSha,
+  requireSha256Digest,
   sealReceipt,
 } from './authority-evidence.mjs';
 
@@ -14,6 +15,7 @@ import {
  *   checkedOutSha: string,
  *   pullRequestHeadSha?: string,
  *   pullRequestBaseSha?: string,
+ *   runtimeImageId: string,
  *   githubEnvironment: NodeJS.ProcessEnv,
  *   expectedRepositoryId?: string,
  *   expectedOwnerId?: string,
@@ -25,12 +27,14 @@ export function buildRevisionReceipt({
   checkedOutSha,
   pullRequestHeadSha,
   pullRequestBaseSha,
+  runtimeImageId,
   githubEnvironment,
   expectedRepositoryId,
   expectedOwnerId,
 }) {
   const testedCheckoutSha = requireExactSha('checkedOutSha', checkedOutSha);
   const workflowSha = requireExactSha('githubSha', githubSha);
+  const observedRuntimeImageId = requireSha256Digest('runtimeImageId', runtimeImageId);
 
   if (testedCheckoutSha !== workflowSha) {
     throw new Error(
@@ -67,6 +71,7 @@ export function buildRevisionReceipt({
     baseSha,
     testedCheckoutSha,
     testedMergeSha,
+    runtimeImageId: observedRuntimeImageId,
     githubExecution,
   });
 }
@@ -90,6 +95,7 @@ function runCli() {
     checkedOutSha: currentCheckedOutSha(),
     pullRequestHeadSha: process.env.CI_PR_HEAD_SHA,
     pullRequestBaseSha: process.env.CI_PR_BASE_SHA,
+    runtimeImageId: process.env.CI_RUNTIME_IMAGE_ID ?? '',
     githubEnvironment: process.env,
     expectedRepositoryId: process.env.CI_EXPECTED_REPOSITORY_ID,
     expectedOwnerId: process.env.CI_EXPECTED_OWNER_ID,
