@@ -17,12 +17,18 @@ const RECEIPT_PATH = 'gcp-live-proof-receipt.json';
 type ProofOutcome = 'OBSERVED' | 'BLOCKED_BY_MISSING_EVIDENCE' | 'CONTRADICTED';
 
 interface LiveProofReceiptBody extends Record<string, unknown> {
-  schemaVersion: 'prooffleet.gcp-live-proof.v1';
+  schemaVersion: 'prooffleet.gcp-live-proof.v2';
   outcome: ProofOutcome;
   reason: string;
   sourceRevision: string;
+  githubRepositoryId: string;
   workflowRunId: string;
-  actorHash: string;
+  workflowRunAttempt: string;
+  githubActorIdHash: string;
+  runnerNameHash: string;
+  runnerOs: string;
+  runnerArch: string;
+  executionContextHash: string;
   projectId: string;
   region: string;
   cloudRunService: string;
@@ -48,10 +54,16 @@ function writeReceipt(body: LiveProofReceiptBody): void {
 
 async function runLiveProof(plan: LiveGcpProofPlan): Promise<LiveProofReceiptBody> {
   const base = {
-    schemaVersion: 'prooffleet.gcp-live-proof.v1' as const,
+    schemaVersion: 'prooffleet.gcp-live-proof.v2' as const,
     sourceRevision: plan.sourceRevision,
+    githubRepositoryId: plan.githubRepositoryId,
     workflowRunId: plan.workflowRunId,
-    actorHash: plan.actorHash,
+    workflowRunAttempt: plan.workflowRunAttempt,
+    githubActorIdHash: plan.githubActorIdHash,
+    runnerNameHash: plan.runnerNameHash,
+    runnerOs: plan.runnerOs,
+    runnerArch: plan.runnerArch,
+    executionContextHash: plan.executionContextHash,
     projectId: plan.projectId,
     region: plan.region,
     cloudRunService: plan.serviceName,
@@ -123,7 +135,7 @@ async function runLiveProof(plan: LiveGcpProofPlan): Promise<LiveProofReceiptBod
   const grant = consent.respond(
     request.requestId,
     'APPROVED',
-    `github-actor:${plan.actorHash.slice(0, 16)}`,
+    `github-actor-id:${plan.githubActorIdHash.slice(0, 16)}`,
     'Owner-triggered workflow supplied the exact live-proof confirmation phrase.',
   );
   if (!grant) throw new Error('explicit live-proof consent grant was not created');
