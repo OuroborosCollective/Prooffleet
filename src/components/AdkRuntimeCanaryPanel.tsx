@@ -6,7 +6,6 @@ import {
   KeyRound,
   Loader2,
   Play,
-  RefreshCw,
   ShieldCheck,
 } from "lucide-react";
 
@@ -81,8 +80,9 @@ export function AdkRuntimeCanaryPanel({
 
   const eligible = canary?.eligible === true;
   const observed = canary?.status === "OBSERVED" && canary.receipt !== null;
+  const failed = canary?.status === "FAILED";
   const running = isRunningCanary || canary?.status === "RUNNING";
-  const canRun = eligible && operatorConfigured && operatorAuthenticated && !running && !observed;
+  const canRun = eligible && operatorConfigured && operatorAuthenticated && !running && !observed && !failed;
 
   return (
     <section
@@ -200,7 +200,14 @@ export function AdkRuntimeCanaryPanel({
               <p className="text-sm text-slate-600">
                 Authenticated as <span className="font-medium text-slate-900">{operatorIdentity || "operator"}</span>.
               </p>
-              {!observed ? (
+              {observed ? (
+                <p className="text-xs font-medium text-emerald-700">This process already has an observed canary receipt.</p>
+              ) : failed ? (
+                <p className="text-xs font-medium text-rose-700">
+                  This process already spent its one bounded ADK canary attempt. Restart or redeploy a source-bound runtime
+                  before another live attempt.
+                </p>
+              ) : (
                 <button
                   type="button"
                   onClick={() => void onRunCanary()}
@@ -209,15 +216,11 @@ export function AdkRuntimeCanaryPanel({
                 >
                   {running ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  ) : canary?.status === "FAILED" ? (
-                    <RefreshCw className="h-4 w-4" aria-hidden="true" />
                   ) : (
                     <Play className="h-4 w-4" aria-hidden="true" />
                   )}
-                  {running ? "Running live canary…" : canary?.status === "FAILED" ? "Retry ADK canary" : "Run ADK live canary"}
+                  {running ? "Running live canary…" : "Run ADK live canary"}
                 </button>
-              ) : (
-                <p className="text-xs font-medium text-emerald-700">This process already has an observed canary receipt.</p>
               )}
             </div>
           ) : (

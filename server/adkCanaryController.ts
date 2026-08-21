@@ -41,8 +41,9 @@ function normalizeSourceRevision(sourceRevision: string | undefined): string | n
  *
  * Important boundaries:
  * - source revision is fixed at process construction time;
- * - only one provider call may be in flight at once;
- * - an OBSERVED receipt is memoized and never re-issued in this process;
+ * - only one canary execution attempt may be issued per process;
+ * - concurrent callers share the same in-flight attempt;
+ * - success or failure is terminal until the source-bound runtime restarts;
  * - raw provider failures are reduced to a small non-sensitive reason enum;
  * - this controller carries no authority over consent, external effects or Judge verdicts.
  */
@@ -52,6 +53,7 @@ export class AdkRuntimeCanaryController {
   private receiptValue: AdkRuntimeCanaryReceipt | null = null;
   private failureReasonValue: string | null = null;
   private inFlight: Promise<AdkRuntimeCanarySnapshot> | null = null;
+  private attemptConsumed = false;
 
   constructor(sourceRevision: string | undefined) {
     this.sourceRevision = normalizeSourceRevision(sourceRevision);
@@ -84,6 +86,11 @@ export class AdkRuntimeCanaryController {
       return this.inFlight;
     }
 
+    if (this.attemptConsumed) {
+      return this.snapshot();
+    }
+
+    this.attemptConsumed = true;
     this.statusValue = "RUNNING";
     this.failureReasonValue = null;
 

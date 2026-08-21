@@ -83,6 +83,33 @@ describe('ADK runtime canary controller', () => {
     expect(counter.calls).toBe(1);
   });
 
+  it('freezes a failed canary and never retries the provider in the same process', async () => {
+    const controller = new AdkRuntimeCanaryController(SOURCE_REVISION);
+    const counter = { calls: 0 };
+
+    const first = await controller.trigger({
+      providerFactory: () => ({
+        models: {
+          generateContent: async () => {
+            counter.calls += 1;
+            throw new Error('first-provider-failure');
+          },
+        },
+      }),
+      nonceFactory: () => NONCE,
+    });
+
+    const second = await controller.trigger({
+      providerFactory: () => matchingProvider(counter),
+      nonceFactory: () => NONCE,
+    });
+
+    expect(first.status).toBe('FAILED');
+    expect(first.failureReason).toBe('adk_canary_provider_error');
+    expect(second).toEqual(first);
+    expect(counter.calls).toBe(1);
+  });
+
   it('sanitizes unknown provider failures instead of leaking raw exception text', async () => {
     const controller = new AdkRuntimeCanaryController(SOURCE_REVISION);
     const result = await controller.trigger({

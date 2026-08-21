@@ -74,4 +74,11 @@ describe('ADK canary operator UI safety contract', () => {
     expect(panel).toContain('consent decision');
     expect(panel).toContain('Judge action');
   });
+
+  it('does not offer a same-process retry after a failed live canary', () => {
+    expect(panel).toContain('const failed = canary?.status === "FAILED"');
+    expect(panel).toContain('!failed');
+    expect(panel).toContain('spent its one bounded ADK canary attempt');
+    expect(panel).not.toContain('Retry ADK canary');
+  });
 });
