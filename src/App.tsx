@@ -358,6 +358,8 @@ export default function App() {
   };
 
   const isRunning = activeMission?.status === "running";
+  const missionActive =
+    activeMission?.status === "running" || activeMission?.status === "paused_for_consent";
 
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-900 flex flex-col font-sans">
@@ -377,7 +379,7 @@ export default function App() {
 
         <MissionControl
           onRunMission={handleRunMission}
-          isRunning={isRunning}
+          isRunning={missionActive}
           onResetChain={handleResetChain}
           canResetChain={operatorSession.configured && operatorSession.authenticated}
         />

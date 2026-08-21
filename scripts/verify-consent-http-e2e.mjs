@@ -97,6 +97,16 @@ async function respondToConsent({ requestId, decision, cookie }) {
   });
 }
 
+async function resetEvidence(cookie) {
+  return fetchJson('/api/evidence/reset', {
+    method: 'POST',
+    headers: {
+      'x-prooffleet-evidence-reset-intent': '1',
+      cookie,
+    },
+  });
+}
+
 async function main() {
   console.log('[consent-http-e2e] starting configured production server');
 
@@ -230,6 +240,39 @@ async function main() {
       throw new Error('pending consent request is not bound to the started mission');
     }
 
+    const chainBeforeBlockedReset = await fetchJson('/api/evidence/chain');
+    if (!chainBeforeBlockedReset.response.ok || typeof chainBeforeBlockedReset.body?.count !== 'number') {
+      throw new Error('unable to read evidence chain before blocked reset');
+    }
+
+    const blockedReset = await resetEvidence(cookie);
+    if (
+      blockedReset.response.status !== 409 ||
+      blockedReset.body?.error !== 'mission_active_reset_blocked'
+    ) {
+      throw new Error(
+        `paused mission reset expected 409 mission_active_reset_blocked, got ${blockedReset.response.status}: ${JSON.stringify(blockedReset.body)}`,
+      );
+    }
+
+    const activeAfterBlockedReset = await fetchJson('/api/fleet/active-mission');
+    if (
+      activeAfterBlockedReset.body?.mission?.id !== rejectMission.id ||
+      activeAfterBlockedReset.body?.mission?.status !== 'paused_for_consent'
+    ) {
+      throw new Error('blocked reset changed paused mission ownership');
+    }
+
+    const pendingAfterBlockedReset = await fetchJson('/api/consent/pending');
+    if (!pendingAfterBlockedReset.body?.requests?.some((request) => request.requestId === rejectRequest.requestId)) {
+      throw new Error('blocked reset removed pending consent state');
+    }
+
+    const chainAfterBlockedReset = await fetchJson('/api/evidence/chain');
+    if (chainAfterBlockedReset.body?.count !== chainBeforeBlockedReset.body.count) {
+      throw new Error('blocked reset changed evidence chain state');
+    }
+
     const unauthenticatedDecision = await fetchJson('/api/consent/respond', {
       method: 'POST',
       headers: {
@@ -294,7 +337,27 @@ async function main() {
       throw new Error('active mission readback does not match approved-but-unprovisioned outcome');
     }
 
-    console.log('[consent-http-e2e] authenticated mission, concurrency and consent production E2E passed');
+    const terminalReset = await resetEvidence(cookie);
+    if (!terminalReset.response.ok || terminalReset.body?.success !== true) {
+      throw new Error(`terminal mission reset failed: ${JSON.stringify(terminalReset.body)}`);
+    }
+
+    const activeAfterTerminalReset = await fetchJson('/api/fleet/active-mission');
+    if (activeAfterTerminalReset.body?.mission !== null) {
+      throw new Error('terminal reset did not clear active mission state');
+    }
+
+    const chainAfterTerminalReset = await fetchJson('/api/evidence/chain');
+    if (chainAfterTerminalReset.body?.count !== 0) {
+      throw new Error(`terminal reset expected empty evidence chain, got ${chainAfterTerminalReset.body?.count}`);
+    }
+
+    const pendingAfterTerminalReset = await fetchJson('/api/consent/pending');
+    if (!Array.isArray(pendingAfterTerminalReset.body?.requests) || pendingAfterTerminalReset.body.requests.length !== 0) {
+      throw new Error('terminal reset did not clear consent request state');
+    }
+
+    console.log('[consent-http-e2e] authenticated mission, concurrency, reset and consent production E2E passed');
   } finally {
     child.kill('SIGTERM');
     await new Promise((resolve) => {

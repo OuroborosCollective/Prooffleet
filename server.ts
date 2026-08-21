@@ -189,7 +189,9 @@ async function startServer() {
 
   // Evidence reset is a destructive truth-path mutation. It requires both a
   // deliberate reset intent and the same authenticated operator authority used
-  // by other privileged runtime mutations.
+  // by other privileged runtime mutations. Active mission ownership is a hard
+  // exclusion boundary: resetting underneath a running/paused pipeline would
+  // let background execution write into a new truth state.
   app.post("/api/evidence/reset", (req, res) => {
     if (req.get("x-prooffleet-evidence-reset-intent") !== "1") {
       return res.status(403).json({ error: "evidence reset intent header required" });
@@ -201,6 +203,14 @@ async function startServer() {
     }
     if (!operator.authenticated || !operator.identity) {
       return res.status(401).json({ error: "authenticated operator session required" });
+    }
+
+    const activeMission = fleetRunner.getActiveMission();
+    if (
+      activeMission &&
+      (activeMission.status === "running" || activeMission.status === "paused_for_consent")
+    ) {
+      return res.status(409).json({ error: "mission_active_reset_blocked" });
     }
 
     fleetRunner.resetEvidence();
