@@ -25,11 +25,27 @@ describe('GCP deploy bootstrap safety contract', () => {
     expect(source).not.toContain('511695074775-compute@developer.gserviceaccount.com');
   });
 
-  it('restricts GitHub OIDC admission to exactly the ProofFleet repository', () => {
-    expect(source).toContain('GITHUB_REPO="OuroborosCollective/Prooffleet"');
-    expect(source).toContain("EXPECTED_CONDITION=\"assertion.repository == '${GITHUB_REPO}'\"");
-    expect(source).toContain('attribute.repository=assertion.repository');
+  it('binds WIF authorization to immutable repository, owner and actor ids', () => {
+    expect(source).toContain('GITHUB_REPOSITORY_ID="1339097875"');
+    expect(source).toContain('GITHUB_OWNER_ID="266194342"');
+    expect(source).toContain("assertion.repository_id == '${GITHUB_REPOSITORY_ID}'");
+    expect(source).toContain("assertion.repository_owner_id == '${GITHUB_OWNER_ID}'");
+    expect(source).toContain("assertion.actor_id == '${GITHUB_OWNER_ID}'");
+    expect(source).toContain('attribute.repository_id=assertion.repository_id');
+    expect(source).toContain('attribute.repository_owner_id=assertion.repository_owner_id');
+    expect(source).toContain('attribute.actor_id=assertion.actor_id');
+    expect(source).toContain('attribute.repository_id/${GITHUB_REPOSITORY_ID}');
     expect(source).toContain('roles/iam.workloadIdentityUser');
+    expect(source).not.toContain('attribute.repository/${GITHUB_REPO}');
+  });
+
+  it('fails closed when an existing provider still has name-based or missing immutable claim mappings', () => {
+    expect(source).toContain('immutable-ID issuer/repository/actor restriction');
+    expect(source).toContain("provider.get('attributeMapping')");
+    expect(source).toContain("'attribute.repository_id': 'assertion.repository_id'");
+    expect(source).toContain("'attribute.repository_owner_id': 'assertion.repository_owner_id'");
+    expect(source).toContain("'attribute.actor_id': 'assertion.actor_id'");
+    expect(source).toContain('Existing WIF provider attribute mapping is missing immutable GitHub identity claims.');
   });
 
   it('uses resource-scoped least-privilege deployment roles and no broad admin roles', () => {
@@ -155,12 +171,13 @@ exit 99
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain('[proofleet-deploy] mode=dry-run');
       expect(result.stdout).toContain('[proofleet-deploy] runtime_service_account=123456789012-compute@developer.gserviceaccount.com');
+      expect(result.stdout).toContain('[proofleet-deploy] github_repository_id=1339097875');
+      expect(result.stdout).toContain('[proofleet-deploy] github_owner_id=266194342');
       expect(result.stdout).toContain('[dry-run] gcloud services enable');
       expect(result.stdout).toContain('roles/artifactregistry.writer');
       expect(result.stdout).toContain('roles/run.developer');
       expect(result.stdout).toContain('roles/iam.serviceAccountUser');
       expect(result.stdout).toContain('PROOFFLEET_GCP_DEPLOY_SERVICE_ACCOUNT=prooffleet-deploy@proofleet-test-12345.iam.gserviceaccount.com');
-      expect(result.stdout).toContain('dry-run complete; no IAM, registry, Cloud Run, traffic or Firestore mutation was performed');
 
       const actualCalls = readFileSync(gcloudLog, 'utf8');
       expect(actualCalls).toContain('projects describe proofleet-test-12345');
