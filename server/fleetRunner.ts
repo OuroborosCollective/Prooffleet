@@ -118,6 +118,11 @@ export class FleetRunner {
     thinkingLevel: Mission["thinkingLevel"] = "HIGH",
     requireConsentForWrite: boolean = true
   ): Promise<Mission> {
+    const active = this.activeMission;
+    if (active && (active.status === "running" || active.status === "paused_for_consent")) {
+      throw new Error("mission_already_active");
+    }
+
     const missionId = `mission-${Date.now().toString(36)}`;
     const missionRevision = 1;
     const manifestHash = sha256Hex(

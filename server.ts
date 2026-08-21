@@ -123,8 +123,14 @@ async function startServer() {
         requireConsentForWrite !== false
       );
       res.json({ success: true, mission });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === "mission_already_active") {
+        return res.status(409).json({ success: false, error: "mission_already_active" });
+      }
+      res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : "mission_start_failed",
+      });
     }
   });
 

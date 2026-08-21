@@ -194,6 +194,37 @@ async function main() {
       'Create a bounded proof effect that requires explicit operator consent.',
       cookie,
     );
+
+    const competingMission = await fetchJson('/api/fleet/run', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-prooffleet-mission-intent': '1',
+        cookie,
+      },
+      body: JSON.stringify({
+        title: 'CI competing mission must be rejected',
+        inputGoal: 'This mission must never start while another mission owns the runtime.',
+        presetKey: 'custom',
+        strictness: 'high_assurance',
+        thinkingLevel: 'HIGH',
+        requireConsentForWrite: true,
+      }),
+    });
+    if (
+      competingMission.response.status !== 409 ||
+      competingMission.body?.error !== 'mission_already_active'
+    ) {
+      throw new Error(
+        `concurrent mission start expected 409 mission_already_active, got ${competingMission.response.status}: ${JSON.stringify(competingMission.body)}`,
+      );
+    }
+
+    const activeAfterConflict = await fetchJson('/api/fleet/active-mission');
+    if (activeAfterConflict.body?.mission?.id !== rejectMission.id) {
+      throw new Error('concurrent mission attempt replaced the active mission');
+    }
+
     const rejectRequest = await waitForPendingConsent();
     if (rejectRequest.missionId !== rejectMission.id) {
       throw new Error('pending consent request is not bound to the started mission');
@@ -263,7 +294,7 @@ async function main() {
       throw new Error('active mission readback does not match approved-but-unprovisioned outcome');
     }
 
-    console.log('[consent-http-e2e] authenticated mission and consent production E2E passed');
+    console.log('[consent-http-e2e] authenticated mission, concurrency and consent production E2E passed');
   } finally {
     child.kill('SIGTERM');
     await new Promise((resolve) => {
