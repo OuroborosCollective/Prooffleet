@@ -1,14 +1,14 @@
 # ProofFleet Engineering Handoff — 2026-08-21
 
-Status: **Google ADK + Grounding Evidence P0 repo-side closed; live Google provider provisioning still pending**
+Status: **Google ADK + Agent Search grounding lane repo-side prepared; live provider usage remains disabled**
 
 Repository: `OuroborosCollective/Prooffleet`  
 Branch: `hardening/fortified-fleet`  
 PR: `#1 Hardening: evidence-first fortified fleet` — **Draft**  
 Base `main`: `89302dfbe1ef732ff3962b47ce914a7e299f5075`  
-Last fully verified source head before this handoff-only commit: `d199e974682305337194763454239eeda741e540`  
-Synthetic PR merge SHA tested by GitHub: `a68464a18d3509e0449384431d1762629480ebc3`  
-GitHub Actions run: `32442716084` / run number `233`
+Last fully verified source head before this handoff-only commit: `3f16aeb99d73cee0ee5f54ad8b8acb5739cb8d5a`  
+Synthetic PR merge SHA tested by GitHub: `664301b76e86a950fb36b2adf092d5a6cf159bed`  
+GitHub Actions run: `32444308732` / run number `241`
 
 Hackathon: **Google All Things Agentic Hackathon**  
 Target track: **Fortified Enterprise Fleet**  
@@ -20,18 +20,18 @@ This documentation update advances the branch head. Before further code or cloud
 
 # 1. Exact verified checkpoint
 
-Run #233 is fully green for source head:
+Run #241 is fully green for source head:
 
 ```text
-d199e974682305337194763454239eeda741e540
+3f16aeb99d73cee0ee5f54ad8b8acb5739cb8d5a
 ```
 
 Remote evidence from the same run:
 
 - immutable dependency install via `npm ci`
 - TypeScript `tsc --noEmit`
-- **35 test files passed**
-- **181 tests passed**
+- **37 test files passed**
+- **197 tests passed**
 - production truth guards passed
 - Vite + esbuild production build passed
 - production HTTP runtime smoke passed
@@ -39,7 +39,7 @@ Remote evidence from the same run:
 - exact Docker image built and started with `PORT=8080`
 - container `/api/health` readback passed
 - high/critical dependency audit passed
-- source head and GitHub synthetic merge SHA recorded separately
+- source head and synthetic PR merge SHA recorded separately
 
 Exact CI revision receipt:
 
@@ -47,25 +47,30 @@ Exact CI revision receipt:
 {
   "schemaVersion": "prooffleet.ci-revision-receipt.v1",
   "eventName": "pull_request",
-  "sourceHeadSha": "d199e974682305337194763454239eeda741e540",
+  "sourceHeadSha": "3f16aeb99d73cee0ee5f54ad8b8acb5739cb8d5a",
   "baseSha": "89302dfbe1ef732ff3962b47ce914a7e299f5075",
-  "testedCheckoutSha": "a68464a18d3509e0449384431d1762629480ebc3",
-  "testedMergeSha": "a68464a18d3509e0449384431d1762629480ebc3"
+  "testedCheckoutSha": "664301b76e86a950fb36b2adf092d5a6cf159bed",
+  "testedMergeSha": "664301b76e86a950fb36b2adf092d5a6cf159bed"
 }
 ```
 
 Dependency truth:
 
-- `npm audit --audit-level=high` exits successfully
-- **0 high / 0 critical** findings
-- remaining findings are **6 low / 19 moderate**, currently in the Google ADK/upstream dependency graph
-- the audit gate was not weakened
+```text
+25 findings total
+6 low
+19 moderate
+0 high
+0 critical
+```
+
+The high/critical audit gate remains intact.
 
 ---
 
 # 2. Core authority model
 
-ProofFleet is an evidence-first multi-agent control loop.
+ProofFleet is an evidence-first multi-agent control loop:
 
 ```text
 mission
@@ -93,9 +98,7 @@ gatekeeper
 operator
 ```
 
-Independent Verifier and Judge remain separate authorities.
-
-Truth rules:
+Critical truth rules:
 
 ```text
 planning != execution
@@ -111,39 +114,36 @@ ADK_RUNTIME_OBSERVED != mission VERIFIED
 
 # 3. Google ADK reasoning path — CLOSED repo-side
 
-Current contract:
-
 - dependency: `@google/adk ^1.6.0`
 - model: `gemini-3.7-flash`
 - provider provenance: `google-adk`
-- `server/gemini.ts` executes real ADK `LlmAgent + Runner + InMemorySessionService`
-- ADK receives no tools and no execution/consent/evidence/Judge authority
+- real path uses `LlmAgent + Runner + InMemorySessionService`
+- ADK receives no execution/consent/evidence/Judge authority
 - Orchestrator and Scout output remains `AGENT_OUTPUT`
-- missing final response fails closed
-- conflicting `GOOGLE_API_KEY` / legacy `GEMINI_API_KEY` fails closed
+- malformed/missing final responses fail closed
+- conflicting `GOOGLE_API_KEY` / `GEMINI_API_KEY` fails closed
 - credentials are never placed in receipts
 
-The source-bound ADK runtime-canary contract is also repo-side closed, but no real live network observation is claimed yet.
+The source-bound ADK live-canary contract exists, but no real live network observation is claimed yet.
 
 ---
 
-# 4. Google Agent Search Grounding Evidence Lane — P0 CLOSED
+# 4. Agent Search Grounding Evidence Lane — CLOSED repo-side
 
-New core file:
+Core contract:
 
 ```text
 server/evidence/grounding.ts
 ```
 
-Provider contract:
+Provider identity:
 
 ```text
-AgentSearchEvidenceProvider
 provider = google-agent-search
 retrievalMode = OWN_DATA
 ```
 
-Grounding state vocabulary:
+Grounding states:
 
 ```text
 NOT_CONFIGURED
@@ -152,109 +152,146 @@ OBSERVED
 FAILED
 ```
 
-Current production runtime intentionally uses:
-
-```text
-createUnconfiguredAgentSearchEvidenceProvider()
-```
-
-Therefore the live server currently reports **NOT_CONFIGURED** and performs:
-
-- no Google Agent Search request
-- no grounded-generation request
-- no credential access
-- no billable grounding action
-
-Read-only endpoint:
-
-```text
-GET /api/evidence/grounding/status
-```
-
-There is intentionally **no Grounding POST route** in P0.
-
----
-
-# 5. GroundingReceipt truth contract
-
-Schema:
+Durable receipt schema:
 
 ```text
 prooffleet.grounding.v1
 ```
 
-A durable `GROUNDING_OBSERVED` receipt binds:
+A `GROUNDING_OBSERVED` receipt binds:
 
 - mission ID
 - exact 40-character source revision
-- provider `google-agent-search`
-- retrieval mode `OWN_DATA`
-- source kind `AGENT_SEARCH_READBACK`
-- SHA-256 of the query
-- SHA-256 identities of source reference, document ID and chunk ID
-- source ranking
-- whether generation was observed
-- SHA-256 of generated response if present
+- provider identity
+- query SHA-256
+- SHA-256 identities for source reference, document and chunk
+- rank
+- generation-observed flag
+- generated-response SHA-256 when present
 - citation count
 - observation timestamp
 - canonical receipt SHA-256
 
-Raw query text, raw retrieved source identifiers and raw generated response are not persisted in the receipt.
+Raw query text, raw source identifiers and raw generated response are not persisted in the receipt.
 
-Receipt verification proves only:
+Receipt integrity explicitly proves only receipt integrity; it does not make the underlying factual claim true and cannot independently produce a Judge `VERIFIED` verdict.
 
-> the grounding receipt is structurally valid and its hash recomputes.
+Production server currently exposes only:
 
-It explicitly does **not** prove the factual claim contained in or derived from the provider output.
+```text
+GET /api/evidence/grounding/status
+```
 
-Judge remains the only final verdict authority.
+There is intentionally no live Grounding POST route.
 
 ---
 
-# 6. Grounding adversarial regressions — CLOSED
+# 5. Dormant real Google Agent Search adapter — CLOSED repo-side
 
-Core tests:
+File:
 
 ```text
-tests/grounding-evidence.test.ts
-tests/grounding-ui-contract.test.ts
-tests/fixtures/mockAgentSearchProvider.ts
+server/evidence/googleAgentSearchProvider.ts
 ```
 
-The mock provider exists under `tests/` only; runtime code imports no mock/fake/stub.
+Verified source before billing-canary work:
 
-Run #233 proves:
+```text
+9af1e0df5435c22e1a70afdd1d0a0b5c61e945df
+```
 
-- unconfigured provider => `NOT_CONFIGURED`
-- no retrieval call occurs while unconfigured
-- raw query/source IDs/generated text are absent from durable receipt
-- receipt hash independently recomputes
-- tampering is detected
-- malformed source revision fails
-- a source-less grounding observation fails
-- upstream provider errors are sanitized
-- a valid grounding receipt by itself still leaves Judge at `BLOCKED_BY_MISSING_EVIDENCE`
-- the server exposes only a read-only Grounding status route
-- UI cannot call a cost-triggering Grounding route
-- Grounding code/panel contains no Google/Gemini credential material
+The adapter implements the real Google Discovery Engine / Agent Search v1 request contract but is **not wired into `server.ts`**.
+
+Safety contract:
+
+- OAuth/IAM token only; no API-key `searchLite` path
+- strict ServingConfig resource identity
+- exact project binding
+- global or documented regional Discovery Engine endpoint
+- one `POST .../v1/{servingConfig}:search`
+- `searchResultMode = CHUNKS`
+- `pageSize = 5`, hard maximum 5
+- no page token
+- no automatic pagination
+- no summary generation
+- no adjacent chunk expansion
+- raw chunk body is not projected into durable evidence identity
+- provider failures sanitize to `agent_search_request_failed`
+- disabled/incomplete config returns the existing unconfigured provider
+
+Run #239 previously proved the adapter with **36 test files / 189 tests** before the billing-canary controller was added.
+
+---
+
+# 6. One-request billing canary — CLOSED repo-side
+
+Files:
+
+```text
+server/evidence/groundingBillingCanaryController.ts
+tests/grounding-billing-canary.test.ts
+```
+
+Exact arming phrase:
+
+```text
+I_APPROVE_ONE_AGENT_SEARCH_BILLING_CANARY
+```
+
+State machine:
+
+```text
+DISABLED
+INELIGIBLE_SOURCE
+READY
+RUNNING
+NOT_CONFIGURED
+OBSERVED
+SPENT_FAILED
+BLOCKED
+```
+
+Hard cost contract:
+
+```text
+maxProviderRequests = 1
+providerRequestsUsed = 0 | 1
+```
+
+Run #241 proves:
+
+- disabled by default => 0 provider requests
+- malformed/non-exact source revision => 0 provider requests
+- provider `NOT_CONFIGURED` => 0 retrieval requests
+- successful billing canary => exactly 1 retrieval request
+- successful receipt is memoized; repeat trigger cannot spend another request
+- 25 concurrent triggers deduplicate to exactly 1 provider request
+- provider failure marks `SPENT_FAILED`; no automatic retry is allowed
+- failure text is sanitized
+- mission/source mismatch blocks before spending request budget
+- production `server.ts` does not import or expose the billing-canary controller
+
+Therefore current live billable Agent Search usage from ProofFleet remains:
+
+```text
+0 requests
+```
+
+No promotional-credit consumption is claimed.
 
 ---
 
 # 7. Grounding UI — CLOSED repo-side
 
-New component:
+Component:
 
 ```text
 src/components/GroundingEvidencePanel.tsx
 ```
 
-`App.tsx` polls:
+`App.tsx` polls the read-only status endpoint.
 
-```text
-/api/evidence/grounding/status
-```
-
-UI vocabulary:
+UI states:
 
 ```text
 GROUNDING_OBSERVED
@@ -263,15 +300,43 @@ GROUNDING_FAILED
 NOT_CONFIGURED
 ```
 
-Critical copy:
+Critical user-facing truth:
 
 > Google Agent Search retrieval evidence. A grounding observation is evidence input, not a Judge verdict.
 
-The UI contains no action button that can start Agent Search or incur a provider request in P0.
+The UI currently exposes no control that can incur Agent Search usage.
 
 ---
 
-# 8. Real Google Cloud truth currently observed
+# 8. GenAI App Builder promotional credit
+
+User-observed billing promotion:
+
+```text
+Trial credit for GenAI App Builder
+EUR 835.80
+100% unused when discovered
+valid through 2027-02-23
+```
+
+Do not assume this credit covers Cloud Run, Firestore, Artifact Registry or arbitrary Gemini usage.
+
+Safe intended path:
+
+```text
+provision tiny own-data Agent Search store
+-> arm exactly one retrieval billing canary
+-> execute exactly one request
+-> read Billing Cost Table / credit application
+-> only then classify the SKU as promo-eligible
+-> only then scale usage
+```
+
+Until that billing readback exists, promo eligibility is `UNKNOWN`.
+
+---
+
+# 9. Real Google Cloud truth / blocker
 
 Known provider facts:
 
@@ -279,139 +344,82 @@ Known provider facts:
 - project number: `511695074775`
 - Cloud Run service: `prooffleet`
 - region: `europe-west1`
-- original AI-Studio revision observed earlier: `prooffleet-00001-6rc`
-- original revision did not expose `PROOFFLEET_SOURCE_REVISION`
+- earlier AI Studio revision: `prooffleet-00001-6rc`
+- earlier live revision lacked `PROOFFLEET_SOURCE_REVISION`
 - existing runtime identity: `511695074775-compute@developer.gserviceaccount.com`
 - Firestore `(default)` database does not exist
 - no Firestore location has been selected
 
-No Firestore database/location should be silently created.
-
----
-
-# 9. Candidate deployment truth — blocked at real WIF provider gate
-
-Candidate workflow:
-
-```text
-.github/workflows/gcp-deploy-candidate.yml
-```
-
-The candidate target identity is now revision-bound in the workflow rather than depending on six mutable GitHub repository variables.
-
-Real trigger attempts established three distinct facts:
-
-1. initial run failed closed before auth because target variables were absent;
-2. the next run exposed and then fixed an unbound `GITHUB_EVENT_ACTION` workflow bug;
-3. after that fix, preflight passed and the workflow reached **real Google WIF authentication**.
-
-The real provider result was:
+Candidate deploy workflow reached real Google WIF authentication and Google returned:
 
 ```text
 invalid_target
 ```
 
-Google reported that the WIF target pool/provider is disabled, deleted or does not exist.
-
-Expected provider resource:
+Expected resource:
 
 ```text
 projects/511695074775/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo
 ```
 
-Therefore current truthful state is:
+Current provider truth:
 
 ```text
 WIF_PROVIDER = NOT_PROVISIONED / NOT_REACHABLE
 CANDIDATE_IMAGE_PUSH = NOT_EXECUTED
-CLOUD_RUN_CANDIDATE_REVISION = NOT_CREATED_BY_THIS_LANE
+CLOUD_RUN_CANDIDATE_REVISION = NOT_CREATED_BY_THIS LANE
 TRAFFIC_MUTATION = NOT_EXECUTED
+FIRESTORE_WRITE = NOT_EXECUTED
 ```
 
-The deploy label was removed after the failed run.
+Do not restart manual Cloud Shell / WIF setup unless explicitly requested.
 
 ---
 
-# 10. Google GenAI App Builder promotional credit
+# 10. What remains before real Grounding usage
 
-The billing account shows a user-observed promotional credit:
+The repo-side implementation is now prepared as far as it can safely go without provider provisioning.
 
-```text
-Trial credit for GenAI App Builder
-EUR 835.80
-100% unused at discovery time
-valid through 2027-02-23
-```
+A real Agent Search billing canary still requires provider-side facts that do not yet exist:
 
-Do not assume this credit covers arbitrary Cloud Run, Firestore, Artifact Registry or Gemini usage.
+1. an actual own-data Agent Search datastore with chunking enabled;
+2. its exact ServingConfig resource identity;
+3. a runtime OAuth/IAM identity permitted to call Search;
+4. explicit server wiring of the dormant adapter;
+5. explicit arming of the one-request billing-canary controller;
+6. one real Search request;
+7. Billing Cost Table / promotion-credit readback.
 
-Planned safe use is an Agent Search / own-data grounding lane, but actual SKU eligibility must later be proven by a deliberately tiny billing canary and billing-credit readback before scaling usage.
-
-P0 consumed no Agent Search provider usage and makes no billing claim.
-
----
-
-# 11. Exact next repo-only work possible without user cloud interaction
-
-Before provisioning Agent Search, code can still be prepared autonomously:
-
-1. verify the current official Google Agent Search API/auth contract;
-2. implement a **disabled-by-default real provider adapter** behind `AgentSearchEvidenceProvider`;
-3. require explicit datastore/serving-config identity before the adapter can become `READY`;
-4. use injected transport/auth in tests so CI performs no Google request;
-5. ensure provider response projection retains only required source identities and generated text long enough to hash it;
-6. keep all real provider calls impossible while configuration is incomplete;
-7. add request-budget/canary controls before exposing any live Grounding trigger.
-
-Only after that should real Google Agent Search provisioning be considered.
+No live provider usage should be simulated to bridge this gap.
 
 ---
 
-# 12. Live-cloud work still pending
+# 11. Mandatory engineering loop
 
-Provider-side work remains blocked until Google Cloud trust/provisioning can be performed without unsafe guesswork:
-
-- create/verify WIF pool + provider for GitHub if candidate deployment is resumed;
-- create/verify dedicated deployment service account and least-privilege bindings;
-- Artifact Registry candidate path;
-- exact zero-traffic Cloud Run candidate;
-- source/digest/runtime/tag/health readback;
-- real source-bound ADK/Gemini canary;
-- explicit Firestore location decision before DB creation;
-- one real provider effect + authoritative readback;
-- final live mission proof.
-
-No `main` merge, traffic promotion, Firestore creation/write or Devpost final submission should occur merely because repo-side tests are green.
-
----
-
-# 13. Mandatory engineering loop
-
-1. choose one highest-value causal/runtime gap;
-2. re-read exact PR head;
+1. re-read exact PR head;
+2. choose one causal gap;
 3. make one coherent change set;
-4. add a regression for the property;
-5. write/push the branch;
+4. add regression for the property;
+5. push/write branch;
 6. re-read exact source head and unchanged `main` base;
-7. read Actions for that exact source head;
-8. if red, read first failing job/log only;
-9. fix only that causal error family;
-10. repeat until remote CI is green and understood;
-11. keep provider/live evidence separate from unit evidence;
-12. update this handoff at meaningful P0 boundaries.
+7. read Actions for exactly that head;
+8. if red, read only the first causal failure;
+9. fix only that family;
+10. do not call provider/liveness green from unit evidence;
+11. update this handoff at meaningful boundaries.
 
 Never manufacture a success fallback.
 
 ---
 
-# 14. Merge / submission rule
+# 12. Merge / submission rule
 
-Keep PR #1 Draft and keep `main` unchanged until at minimum:
+Keep PR #1 Draft and `main` unchanged until at minimum:
 
 - exact source head has green CI and Docker runtime smoke;
 - a real networked ADK/Gemini canary is observed on an exact source-bound runtime;
 - a Cloud Run candidate is deployed from exact source SHA and read back with matching immutable digest;
 - at least one real provider effect is proven by authoritative readback;
-- final demo mission reaches VERIFIED only through required real evidence;
+- final demo mission reaches `VERIFIED` only through required real evidence;
 - no production truth path uses mocks/fakes;
 - Devpost claims match final observed services/model/runtime.
