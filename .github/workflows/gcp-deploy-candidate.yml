@@ -221,6 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           IMMUTABLE_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}@${IMAGE_DIGEST}"
+          DEPLOY_JSON="$RUNNER_TEMP/cloudrun-deploy-result.json"
           gcloud run deploy "$PROOFFLEET_CLOUDRUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
@@ -230,7 +231,26 @@ jobs:
             --format=json \
             --container=app-container \
             --image="$IMMUTABLE_IMAGE" \
-            --update-env-vars="PROOFFLEET_SOURCE_REVISION=$EXPECTED_SOURCE_REVISION"
+            --update-env-vars="PROOFFLEET_SOURCE_REVISION=$EXPECTED_SOURCE_REVISION" \
+            > "$DEPLOY_JSON"
+
+          node - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" <<'NODE'
+          const fs = require('fs');
+          const [deployPath, expectedSha, expectedDigest] = process.argv.slice(2);
+          const deployed = JSON.parse(fs.readFileSync(deployPath, 'utf8'));
+          const revision = String(deployed.spec?.template?.metadata?.name || '');
+          if (!revision) throw new Error('direct deploy response did not identify the created revision');
+          const labels = deployed.spec?.template?.metadata?.labels || {};
+          if (labels['prooffleet-source-sha'] !== expectedSha) throw new Error('direct deploy response source label mismatch');
+          if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('direct deploy response candidate marker missing');
+          const container = deployed.spec?.template?.spec?.containers?.[0] || {};
+          const image = String(container.image || '');
+          if (!image.includes(`@${expectedDigest}`)) throw new Error('direct deploy response image digest mismatch');
+          const env = Array.isArray(container.env) ? container.env : [];
+          const source = env.find((entry) => entry.name === 'PROOFFLEET_SOURCE_REVISION')?.value || '';
+          if (source !== expectedSha) throw new Error('direct deploy response source env mismatch');
+          console.log(`[candidate-deploy] created revision ${revision}; full deploy response retained only in runner temp`);
+          NODE
 
       - name: Authoritative candidate revision readback
         shell: bash
@@ -241,32 +261,28 @@ jobs:
           set -euo pipefail
           SERVICE_JSON="$RUNNER_TEMP/cloudrun-service.json"
           REVISION_JSON="$RUNNER_TEMP/cloudrun-revision.json"
+          DEPLOY_JSON="$RUNNER_TEMP/cloudrun-deploy-result.json"
+
+          if ! test -s "$DEPLOY_JSON"; then
+            echo 'Direct deploy response is missing; refusing to guess candidate revision identity.' >&2
+            exit 2
+          fi
 
           gcloud run services describe "$PROOFFLEET_CLOUDRUN_SERVICE" \
             --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$SERVICE_JSON"
 
-          REVISION_LIST_JSON="$RUNNER_TEMP/cloudrun-revisions.json"
-          gcloud run revisions list \
-            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$REVISION_LIST_JSON"
-
-          REVISION="$(node - "$REVISION_LIST_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" <<'NODE'
+          REVISION="$(node - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_DIGEST" <<'NODE'
           const fs = require('fs');
-          const [listPath, expectedSha, expectedDigest] = process.argv.slice(2);
-          const revisions = JSON.parse(fs.readFileSync(listPath, 'utf8'));
-          const matches = revisions.filter((revision) => {
-            const labels = revision.metadata?.labels || {};
-            const container = revision.spec?.containers?.[0] || revision.spec?.template?.spec?.containers?.[0] || {};
-            const image = String(container.image || '');
-            return labels['prooffleet-source-sha'] === expectedSha &&
-              String(labels['prooffleet-candidate']) === 'true' &&
-              image.includes(`@${expectedDigest}`);
-          });
-          if (matches.length !== 1) {
-            const observed = matches.map((revision) => revision.metadata?.name || '<unnamed>').join(', ') || '<none>';
-            throw new Error(`Expected exactly one digest- and source-bound candidate revision; found ${matches.length}: ${observed}`);
-          }
-          const revision = String(matches[0].metadata?.name || '');
-          if (!revision) throw new Error('Matched candidate revision has no metadata.name.');
+          const [deployPath, expectedSha, expectedDigest] = process.argv.slice(2);
+          const deployed = JSON.parse(fs.readFileSync(deployPath, 'utf8'));
+          const revision = String(deployed.spec?.template?.metadata?.name || '');
+          if (!revision) throw new Error('direct deploy response did not identify the created revision');
+          const labels = deployed.spec?.template?.metadata?.labels || {};
+          if (labels['prooffleet-source-sha'] !== expectedSha) throw new Error('direct deploy response source label mismatch');
+          if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('direct deploy response candidate marker missing');
+          const container = deployed.spec?.template?.spec?.containers?.[0] || {};
+          const image = String(container.image || '');
+          if (!image.includes(`@${expectedDigest}`)) throw new Error('direct deploy response image digest mismatch');
           process.stdout.write(revision);
           NODE
           )"

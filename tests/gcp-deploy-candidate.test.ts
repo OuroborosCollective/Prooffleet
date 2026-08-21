@@ -71,14 +71,26 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).not.toContain('LATEST=100');
   });
 
-  it('selects the candidate deterministically by source SHA, candidate marker and current image digest', () => {
-    expect(workflow).toContain('gcloud run revisions list');
-    expect(workflow).toContain("labels['prooffleet-source-sha'] === expectedSha");
-    expect(workflow).toContain("String(labels['prooffleet-candidate']) === 'true'");
+  it('binds candidate identity to the direct deploy response before any independent revision readback', () => {
+    expect(workflow).toContain('DEPLOY_JSON="$RUNNER_TEMP/cloudrun-deploy-result.json"');
+    expect(workflow).toContain('> "$DEPLOY_JSON"');
+    expect(workflow).toContain("const revision = String(deployed.spec?.template?.metadata?.name || '')");
+    expect(workflow).toContain("labels['prooffleet-source-sha'] !== expectedSha");
+    expect(workflow).toContain("String(labels['prooffleet-candidate']) !== 'true'");
     expect(workflow).toContain('image.includes(`@${expectedDigest}`)');
-    expect(workflow).toContain('matches.length !== 1');
-    expect(workflow).toContain('Expected exactly one digest- and source-bound candidate revision');
+    expect(workflow).toContain('direct deploy response source env mismatch');
+    expect(workflow).toContain('gcloud run revisions describe "$REVISION"');
+    expect(workflow).not.toContain('gcloud run revisions list');
     expect(workflow).not.toContain('status?.latestCreatedRevisionName');
+  });
+
+  it('never prints the full deploy response that may contain inherited environment values', () => {
+    expect(workflow).toContain('DEPLOY_JSON="$RUNNER_TEMP/cloudrun-deploy-result.json"');
+    expect(workflow).toContain('--format=json');
+    expect(workflow).toContain('> "$DEPLOY_JSON"');
+    expect(workflow).not.toContain('cat "$DEPLOY_JSON"');
+    expect(workflow).not.toContain('cat $DEPLOY_JSON');
+    expect(workflow).toContain('full deploy response retained only in runner temp');
   });
 
   it('requires provider Ready state, revision labels and an exact tagged HTTP health smoke before promotion', () => {
