@@ -23,7 +23,9 @@ function requirePositiveInteger(label, value) {
 
 function requireNonEmpty(label, value) {
   const normalized = String(value ?? '').trim();
-  if (!normalized) throw new Error(`${label} must be non-empty`);
+  if (!normalized || normalized.length > 256 || /[\r\n\0]/.test(normalized)) {
+    throw new Error(`${label} must be a bounded single-line value`);
+  }
   return normalized;
 }
 
@@ -61,6 +63,7 @@ export function buildRevisionReceipt(input) {
     environment: requireNonEmpty('runnerEnvironment', input.runnerEnvironment),
     os: requireNonEmpty('runnerOs', input.runnerOs),
     arch: requireNonEmpty('runnerArch', input.runnerArch),
+    nameSha256: sha256Text(requireNonEmpty('runnerName', input.runnerName)),
   };
   const runtime = {
     containerImageId: requireSha256('containerImageId', input.containerImageId),
@@ -122,6 +125,7 @@ function runCli() {
     runnerEnvironment: process.env.RUNNER_ENVIRONMENT,
     runnerOs: process.env.RUNNER_OS,
     runnerArch: process.env.RUNNER_ARCH,
+    runnerName: process.env.RUNNER_NAME,
     containerImageId: process.env.CI_CONTAINER_IMAGE_ID,
     healthReadbackSha256: process.env.CI_HEALTH_READBACK_SHA256,
   });
