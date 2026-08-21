@@ -119,7 +119,7 @@ export function parseAgentSearchServingConfig(
 
   if (
     endpoint !== 'discoveryengine.googleapis.com' &&
-    !/^[a-z0-9-]+\.discoveryengine\.googleapis\.com$/.test(endpoint)
+    !/^[a-z0-9-]+-discoveryengine\.googleapis\.com$/.test(endpoint)
   ) {
     throw new Error('agent_search_endpoint_invalid');
   }
