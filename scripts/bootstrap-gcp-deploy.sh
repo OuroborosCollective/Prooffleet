@@ -7,7 +7,8 @@ set -euo pipefail
 # - default mode is read-only/dry-run;
 # - mutations require an explicit --apply flag;
 # - no long-lived service-account key is created or accepted;
-# - GitHub OIDC/WIF is restricted to exactly OuroborosCollective/Prooffleet;
+# - GitHub OIDC/WIF authorization is bound to immutable repository/owner/actor IDs;
+# - repository names remain descriptive only and are not authorization evidence;
 # - deployment uses a dedicated service account, never the Cloud Run runtime SA;
 # - the existing Cloud Run runtime service account is discovered authoritatively
 #   and only grants iam.serviceAccounts.actAs to the dedicated deployer;
@@ -16,6 +17,8 @@ set -euo pipefail
 # - no Cloud Run revision is deployed and no traffic is changed here.
 
 GITHUB_REPO="OuroborosCollective/Prooffleet"
+GITHUB_REPOSITORY_ID="1339097875"
+GITHUB_OWNER_ID="266194342"
 POOL_ID="prooffleet-github"
 PROVIDER_ID="prooffleet-repo"
 DEPLOY_SERVICE_ACCOUNT_ID="prooffleet-deploy"
@@ -141,17 +144,11 @@ PROJECT_NUMBER="$RESOLVED_PROJECT_NUMBER"
 DEPLOY_SA_EMAIL="${DEPLOY_SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 POOL_NAME="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}"
 EXPECTED_PROVIDER_NAME="${POOL_NAME}/providers/${PROVIDER_ID}"
-PRINCIPAL_SET="principalSet://iam.googleapis.com/${POOL_NAME}/attribute.repository/${GITHUB_REPO}"
+PRINCIPAL_SET="principalSet://iam.googleapis.com/${POOL_NAME}/attribute.repository_id/${GITHUB_REPOSITORY_ID}"
 EXPECTED_ISSUER="https://token.actions.githubusercontent.com"
-EXPECTED_CONDITION="assertion.repository == '${GITHUB_REPO}'"
+EXPECTED_CONDITION="assertion.repository_id == '${GITHUB_REPOSITORY_ID}' && assertion.repository_owner_id == '${GITHUB_OWNER_ID}' && assertion.actor_id == '${GITHUB_OWNER_ID}'"
+EXPECTED_ATTRIBUTE_MAPPING="google.subject=assertion.sub,attribute.repository_id=assertion.repository_id,attribute.repository_owner_id=assertion.repository_owner_id,attribute.actor_id=assertion.actor_id,attribute.ref=assertion.ref"
 
-# Preflight the target service before planning any mutation. This is also the
-# authority for the runtime service identity that must remain attached to new
-# revisions. Cloud Run may legitimately use a custom service account such as
-# name@project.iam.gserviceaccount.com or a Google-provided default identity
-# such as <project-number>-compute@developer.gserviceaccount.com, so validate
-# the provider-observed value as a Google service-account address rather than
-# assuming only the custom iam.gserviceaccount.com form.
 if ! gcloud run services describe "$CLOUD_RUN_SERVICE" \
   --project="$PROJECT_ID" --region="$REGION" >/dev/null 2>&1; then
   echo "Cloud Run service '$CLOUD_RUN_SERVICE' was not found in '$PROJECT_ID/$REGION'." >&2
@@ -177,11 +174,11 @@ log "cloud_run_service=$CLOUD_RUN_SERVICE"
 log "runtime_service_account=$RUNTIME_SA"
 log "deploy_service_account=$DEPLOY_SA_EMAIL"
 log "artifact_repository=$ARTIFACT_REPOSITORY"
-log "github_repo=$GITHUB_REPO"
+log "github_repo_description=$GITHUB_REPO"
+log "github_repository_id=$GITHUB_REPOSITORY_ID"
+log "github_owner_id=$GITHUB_OWNER_ID"
 log "mode=$($APPLY && echo apply || echo dry-run)"
 
-# Enable only the APIs required for WIF token exchange, Artifact Registry and
-# updating the existing Cloud Run service.
 apply_or_plan gcloud services enable \
   iamcredentials.googleapis.com \
   sts.googleapis.com \
@@ -217,13 +214,33 @@ if gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
   ACTUAL_CONDITION="$(gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
     --project="$PROJECT_ID" --location=global --workload-identity-pool="$POOL_ID" \
     --format='value(attributeCondition)')"
+  PROVIDER_JSON="$(mktemp)"
+  trap 'rm -f "$PROVIDER_JSON"' EXIT
+  gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
+    --project="$PROJECT_ID" --location=global --workload-identity-pool="$POOL_ID" \
+    --format=json > "$PROVIDER_JSON"
   if [[ "$ACTUAL_ISSUER" != "$EXPECTED_ISSUER" || "$ACTUAL_CONDITION" != "$EXPECTED_CONDITION" ]]; then
-    echo "Existing WIF provider does not match the required issuer/repository restriction." >&2
+    echo "Existing WIF provider does not match the immutable-ID issuer/repository/actor restriction." >&2
     echo "issuer=$ACTUAL_ISSUER" >&2
     echo "condition=$ACTUAL_CONDITION" >&2
     exit 3
   fi
-  log "WIF provider exists and repository condition matches"
+  python3 - "$PROVIDER_JSON" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    provider = json.load(handle)
+mapping = provider.get('attributeMapping') or {}
+required = {
+    'google.subject': 'assertion.sub',
+    'attribute.repository_id': 'assertion.repository_id',
+    'attribute.repository_owner_id': 'assertion.repository_owner_id',
+    'attribute.actor_id': 'assertion.actor_id',
+    'attribute.ref': 'assertion.ref',
+}
+if any(mapping.get(key) != value for key, value in required.items()):
+    raise SystemExit('Existing WIF provider attribute mapping is missing immutable GitHub identity claims.')
+PY
+  log "WIF provider exists and immutable repository/owner/actor identity contract matches"
 else
   apply_or_plan gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
     --project="$PROJECT_ID" \
@@ -231,11 +248,10 @@ else
     --workload-identity-pool="$POOL_ID" \
     --display-name="ProofFleet repository" \
     --issuer-uri="$EXPECTED_ISSUER" \
-    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner,attribute.ref=assertion.ref" \
+    --attribute-mapping="$EXPECTED_ATTRIBUTE_MAPPING" \
     --attribute-condition="$EXPECTED_CONDITION"
 fi
 
-# Repository OIDC identities may impersonate only the dedicated deployer.
 apply_or_plan gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_SA_EMAIL" \
   --project="$PROJECT_ID" \
   --role="roles/iam.workloadIdentityUser" \
@@ -266,10 +282,6 @@ else
   log "--apply will enable the API, re-check the repository, and create it only if absent."
 fi
 
-# Least-privilege resource grants for the dedicated deployer:
-# - write/read candidate images in one Artifact Registry repository;
-# - update/read only the existing Cloud Run service;
-# - act as the service's already-attached runtime identity.
 apply_or_plan gcloud artifacts repositories add-iam-policy-binding "$ARTIFACT_REPOSITORY" \
   --project="$PROJECT_ID" \
   --location="$REGION" \
