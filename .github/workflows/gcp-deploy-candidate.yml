@@ -28,15 +28,14 @@ concurrency:
 jobs:
   deploy-candidate:
     name: deploy-candidate-no-traffic
+    # The label is only an intent/routing signal. Immutable numeric identities
+    # are checked in the first shell step before any Google credential exists.
     if: >-
       (github.event_name == 'workflow_dispatch') ||
       (
         github.event_name == 'pull_request' &&
         github.event.action == 'labeled' &&
-        github.event.label.name == 'proofleet-deploy-candidate' &&
-        github.actor == 'OuroborosCollective' &&
-        github.event.pull_request.user.login == 'OuroborosCollective' &&
-        github.event.pull_request.head.repo.full_name == github.repository
+        github.event.label.name == 'proofleet-deploy-candidate'
       )
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -51,10 +50,15 @@ jobs:
       EXPECTED_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.expected_source_revision }}
       DEPLOY_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
       EVENT_ACTION: ${{ github.event.action }}
-      EVENT_ACTOR: ${{ github.actor }}
       PR_LABEL_NAME: ${{ github.event.label.name }}
-      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-      PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      EVENT_ACTOR_ID: ${{ github.actor_id }}
+      REPOSITORY_ID: ${{ github.repository_id }}
+      REPOSITORY_OWNER_ID: ${{ github.repository_owner_id }}
+      PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+      PR_HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id }}
+      EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'
+      EXPECTED_GITHUB_OWNER_ID: '266194342'
+      EXPECTED_GITHUB_ACTOR_ID: '266194342'
 
     steps:
       - name: Checkout exact source revision
@@ -63,7 +67,7 @@ jobs:
           ref: ${{ env.EXPECTED_SOURCE_REVISION }}
           persist-credentials: false
 
-      - name: Fail closed on stale source or missing deployment identity
+      - name: Fail closed on stale source or immutable identity mismatch
         id: identity
         shell: bash
         run: |
@@ -76,6 +80,14 @@ jobs:
             PROOFFLEET_CLOUDRUN_SERVICE
             PROOFFLEET_ARTIFACT_REPOSITORY
             EXPECTED_SOURCE_REVISION
+            EVENT_ACTOR_ID
+            REPOSITORY_ID
+            REPOSITORY_OWNER_ID
+            GITHUB_RUN_ID
+            GITHUB_RUN_ATTEMPT
+            RUNNER_NAME
+            RUNNER_OS
+            RUNNER_ARCH
           )
           for key in "${required[@]}"; do
             if test -z "${!key:-}"; then
@@ -88,10 +100,24 @@ jobs:
             echo 'expected source revision must be an exact lowercase 40-character Git SHA.' >&2
             exit 2
           fi
+          for value in "$EVENT_ACTOR_ID" "$REPOSITORY_ID" "$REPOSITORY_OWNER_ID" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"; do
+            if ! printf '%s' "$value" | grep -Eq '^[1-9][0-9]*$'; then
+              echo "Immutable GitHub execution identity is malformed: $value" >&2
+              exit 2
+            fi
+          done
 
           ACTUAL_SOURCE_REVISION="$(git rev-parse HEAD)"
           if test "$ACTUAL_SOURCE_REVISION" != "$EXPECTED_SOURCE_REVISION"; then
             echo "Refusing mismatched checkout: expected=$EXPECTED_SOURCE_REVISION actual=$ACTUAL_SOURCE_REVISION" >&2
+            exit 2
+          fi
+          if test "$REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID" || test "$REPOSITORY_OWNER_ID" != "$EXPECTED_GITHUB_OWNER_ID"; then
+            echo "Repository identity mismatch: repository_id=$REPOSITORY_ID owner_id=$REPOSITORY_OWNER_ID" >&2
+            exit 2
+          fi
+          if test "$EVENT_ACTOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+            echo "Actor identity mismatch: expected=$EXPECTED_GITHUB_ACTOR_ID actual=$EVENT_ACTOR_ID" >&2
             exit 2
           fi
 
@@ -113,12 +139,16 @@ jobs:
               echo "Unexpected deploy label: $PR_LABEL_NAME" >&2
               exit 2
             fi
-            if test "$EVENT_ACTOR" != 'OuroborosCollective' || test "$PR_AUTHOR" != 'OuroborosCollective'; then
-              echo 'Pre-merge candidate deploy requires owner actor and owner-authored PR.' >&2
+            if ! printf '%s' "$PR_AUTHOR_ID" | grep -Eq '^[1-9][0-9]*$' || ! printf '%s' "$PR_HEAD_REPOSITORY_ID" | grep -Eq '^[1-9][0-9]*$'; then
+              echo 'PR immutable identity fields are missing or malformed.' >&2
               exit 2
             fi
-            if test "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY"; then
-              echo "Refusing candidate deploy from foreign repository: $PR_HEAD_REPOSITORY" >&2
+            if test "$PR_AUTHOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+              echo "PR author ID mismatch: expected=$EXPECTED_GITHUB_ACTOR_ID actual=$PR_AUTHOR_ID" >&2
+              exit 2
+            fi
+            if test "$PR_HEAD_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+              echo "PR head repository ID mismatch: expected=$EXPECTED_GITHUB_REPOSITORY_ID actual=$PR_HEAD_REPOSITORY_ID" >&2
               exit 2
             fi
           else
@@ -140,6 +170,23 @@ jobs:
             echo "Derived candidate tag is malformed: $CANDIDATE_TAG" >&2
             exit 2
           fi
+
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { buildGitHubExecutionIdentity } from './scripts/authority-evidence.mjs';
+          const identity = buildGitHubExecutionIdentity(process.env, {
+            sourceRevision: process.env.EXPECTED_SOURCE_REVISION,
+            expectedRepositoryId: process.env.EXPECTED_GITHUB_REPOSITORY_ID,
+            expectedOwnerId: process.env.EXPECTED_GITHUB_OWNER_ID,
+          });
+          fs.writeFileSync(
+            process.env.RUNNER_TEMP + '/candidate-execution-identity.json',
+            JSON.stringify(identity, null, 2) + '\n',
+            'utf8',
+          );
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `execution_identity_hash=${identity.identityHash}\n`);
+          console.log(`[candidate-identity] repository_id=${identity.repositoryId} actor_id=${identity.actorId} run_id=${identity.runId} run_attempt=${identity.runAttempt} identity_hash=${identity.identityHash}`);
+          NODE
 
           echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
           echo "deploy_source_revision=$EXPECTED_SOURCE_REVISION"
@@ -163,6 +210,55 @@ jobs:
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
+      - name: Bind short-lived WIF credential response to Google Cloud authority
+        shell: bash
+        env:
+          WIF_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          WIF_CREDENTIALS_FILE: ${{ steps.auth.outputs.credentials_file_path }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { buildCredentialEvidence } from './scripts/authority-evidence.mjs';
+
+          const accessToken = process.env.WIF_ACCESS_TOKEN || '';
+          const credentialPath = process.env.WIF_CREDENTIALS_FILE || '';
+          if (!credentialPath || !fs.existsSync(credentialPath)) {
+            throw new Error('WIF credentials file output is missing');
+          }
+          const executionIdentity = JSON.parse(fs.readFileSync(
+            process.env.RUNNER_TEMP + '/candidate-execution-identity.json',
+            'utf8',
+          ));
+          const credentialConfigRaw = fs.readFileSync(credentialPath);
+          const resourceName = `projects/${process.env.GCP_PROJECT_ID}/locations/${process.env.GCP_REGION}/services/${process.env.PROOFFLEET_CLOUDRUN_SERVICE}`;
+          const url = `https://run.googleapis.com/v2/${resourceName}`;
+          const response = await fetch(url, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const cloudRunRaw = await response.text();
+          if (!response.ok) {
+            throw new Error(`credential-bound Cloud Run readback failed with HTTP ${response.status}`);
+          }
+          const evidence = buildCredentialEvidence({
+            executionIdentity,
+            credentialConfigRaw,
+            accessToken,
+            cloudRunServiceRaw: cloudRunRaw,
+            workloadIdentityProvider: process.env.GCP_WIF_PROVIDER,
+            deployServiceAccount: process.env.GCP_DEPLOY_SERVICE_ACCOUNT,
+            projectId: process.env.GCP_PROJECT_ID,
+            region: process.env.GCP_REGION,
+            service: process.env.PROOFFLEET_CLOUDRUN_SERVICE,
+          });
+          fs.writeFileSync(
+            process.env.RUNNER_TEMP + '/gcp-credential-evidence.json',
+            JSON.stringify(evidence, null, 2) + '\n',
+            'utf8',
+          );
+          console.log(`[credential-evidence] run_id=${evidence.githubRunId} config_sha256=${evidence.credentialConfigSha256} token_sha256=${evidence.accessTokenSha256} cloud_run_response_sha256=${evidence.cloudRunResponseSha256} evidence_hash=${evidence.evidenceHash}`);
+          NODE
+
       - name: Snapshot existing service identity without reading secret values
         shell: bash
         run: |
@@ -172,6 +268,11 @@ jobs:
             --format='value(spec.template.spec.serviceAccountName)')"
           if test -z "$RUNTIME_SA"; then
             echo 'Existing Cloud Run runtime service account could not be read.' >&2
+            exit 2
+          fi
+          CREDENTIAL_RUNTIME_SA="$(node -e "const fs=require('fs');const e=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/gcp-credential-evidence.json','utf8'));process.stdout.write(String(e.cloudRunRuntimeServiceAccount||''))")"
+          if test "$RUNTIME_SA" != "$CREDENTIAL_RUNTIME_SA"; then
+            echo "Runtime service-account readbacks disagree: gcloud=$RUNTIME_SA direct_api=$CREDENTIAL_RUNTIME_SA" >&2
             exit 2
           fi
           printf '%s\n' "$RUNTIME_SA" > "$RUNNER_TEMP/runtime-sa-before.txt"
@@ -276,22 +377,17 @@ jobs:
             --update-env-vars="PROOFFLEET_SOURCE_REVISION=$EXPECTED_SOURCE_REVISION" \
             > "$DEPLOY_JSON"
 
-          node - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_INDEX_DIGEST" <<'NODE'
-          const fs = require('fs');
-          const [deployPath, expectedSha, expectedIndexDigest] = process.argv.slice(2);
-          const deployed = JSON.parse(fs.readFileSync(deployPath, 'utf8'));
-          const revision = String(deployed.spec?.template?.metadata?.name || '');
-          if (!revision) throw new Error('direct deploy response did not identify the created revision');
-          const labels = deployed.spec?.template?.metadata?.labels || {};
-          if (labels['prooffleet-source-sha'] !== expectedSha) throw new Error('direct deploy response source label mismatch');
-          if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('direct deploy response candidate marker missing');
-          const container = deployed.spec?.template?.spec?.containers?.[0] || {};
-          const image = String(container.image || '');
-          if (!image.includes(`@${expectedIndexDigest}`)) throw new Error('direct deploy response image index digest mismatch');
-          const env = Array.isArray(container.env) ? container.env : [];
-          const source = env.find((entry) => entry.name === 'PROOFFLEET_SOURCE_REVISION')?.value || '';
-          if (source !== expectedSha) throw new Error('direct deploy response source env mismatch');
-          console.log(`[candidate-deploy] created revision ${revision}; full deploy response retained only in runner temp`);
+          node --input-type=module - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_INDEX_DIGEST" <<'NODE'
+          import fs from 'node:fs';
+          import { parseCandidateDeployResponse } from './scripts/authority-evidence.mjs';
+          const [deployPath, expectedSourceRevision, expectedImageIndexDigest] = process.argv.slice(2);
+          const parsed = parseCandidateDeployResponse(fs.readFileSync(deployPath), {
+            expectedSourceRevision,
+            expectedImageIndexDigest,
+          });
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/candidate-revision-name.txt', parsed.revisionName + '\n');
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/candidate-deploy-response-hash.txt', parsed.responseSha256 + '\n');
+          console.log(`[candidate-deploy] created revision ${parsed.revisionName}; deploy_response_sha256=${parsed.responseSha256}; full response retained only in runner temp`);
           NODE
 
       - name: Authoritative candidate revision readback
@@ -304,110 +400,115 @@ jobs:
           set -euo pipefail
           SERVICE_JSON="$RUNNER_TEMP/cloudrun-service.json"
           REVISION_JSON="$RUNNER_TEMP/cloudrun-revision.json"
-          DEPLOY_JSON="$RUNNER_TEMP/cloudrun-deploy-result.json"
-
-          if ! test -s "$DEPLOY_JSON"; then
-            echo 'Direct deploy response is missing; refusing to guess candidate revision identity.' >&2
-            exit 2
-          fi
-          if ! printf '%s' "$RUNTIME_IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-            echo "Resolved runtime image digest is malformed: $RUNTIME_IMAGE_DIGEST" >&2
-            exit 2
-          fi
+          REVISION="$(cat "$RUNNER_TEMP/candidate-revision-name.txt")"
+          RUNTIME_SA="$(cat "$RUNNER_TEMP/runtime-sa-before.txt")"
+          EXPECTED_RUNTIME_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}@${RUNTIME_IMAGE_DIGEST}"
 
           gcloud run services describe "$PROOFFLEET_CLOUDRUN_SERVICE" \
             --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$SERVICE_JSON"
-
-          REVISION="$(node - "$DEPLOY_JSON" "$EXPECTED_SOURCE_REVISION" "$IMAGE_INDEX_DIGEST" <<'NODE'
-          const fs = require('fs');
-          const [deployPath, expectedSha, expectedIndexDigest] = process.argv.slice(2);
-          const deployed = JSON.parse(fs.readFileSync(deployPath, 'utf8'));
-          const revision = String(deployed.spec?.template?.metadata?.name || '');
-          if (!revision) throw new Error('direct deploy response did not identify the created revision');
-          const labels = deployed.spec?.template?.metadata?.labels || {};
-          if (labels['prooffleet-source-sha'] !== expectedSha) throw new Error('direct deploy response source label mismatch');
-          if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('direct deploy response candidate marker missing');
-          const container = deployed.spec?.template?.spec?.containers?.[0] || {};
-          const image = String(container.image || '');
-          if (!image.includes(`@${expectedIndexDigest}`)) throw new Error('direct deploy response image index digest mismatch');
-          process.stdout.write(revision);
-          NODE
-          )"
-
           gcloud run revisions describe "$REVISION" \
             --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$REVISION_JSON"
 
-          node - "$SERVICE_JSON" "$REVISION_JSON" "$RUNNER_TEMP/runtime-sa-before.txt" "$RUNNER_TEMP/env-names-before.txt" "$EXPECTED_SOURCE_REVISION" "$IMAGE_INDEX_DIGEST" "$RUNTIME_IMAGE_DIGEST" "$CANDIDATE_TAG" <<'NODE'
-          const fs = require('fs');
-          const [servicePath, revisionPath, runtimeSaPath, envNamesPath, expectedSha, expectedIndexDigest, expectedRuntimeDigest, candidateTag] = process.argv.slice(2);
-          const service = JSON.parse(fs.readFileSync(servicePath, 'utf8'));
-          const revision = JSON.parse(fs.readFileSync(revisionPath, 'utf8'));
-          const runtimeBefore = fs.readFileSync(runtimeSaPath, 'utf8').trim();
+          node --input-type=module - "$SERVICE_JSON" "$REVISION_JSON" "$RUNNER_TEMP/env-names-before.txt" "$REVISION" "$EXPECTED_SOURCE_REVISION" "$EXPECTED_RUNTIME_IMAGE" "$RUNTIME_SA" "$CANDIDATE_TAG" "$IMAGE_INDEX_DIGEST" "$RUNTIME_IMAGE_DIGEST" <<'NODE'
+          import fs from 'node:fs';
+          import {
+            parseCandidateRevisionReadback,
+            parseCandidateServiceTrafficReadback,
+            sealReceipt,
+          } from './scripts/authority-evidence.mjs';
+
+          const [
+            servicePath,
+            revisionPath,
+            envNamesPath,
+            expectedRevisionName,
+            expectedSourceRevision,
+            expectedRuntimeImage,
+            expectedRuntimeServiceAccount,
+            candidateTag,
+            imageIndexDigest,
+            runtimeImageDigest,
+          ] = process.argv.slice(2);
+
+          const revision = parseCandidateRevisionReadback(fs.readFileSync(revisionPath), {
+            expectedRevisionName,
+            expectedSourceRevision,
+            expectedRuntimeImage,
+            expectedRuntimeServiceAccount,
+          });
+          const service = parseCandidateServiceTrafficReadback(fs.readFileSync(servicePath), {
+            expectedRevisionName,
+            candidateTag,
+          });
           const envBefore = fs.readFileSync(envNamesPath, 'utf8').split(/\r?\n/).filter(Boolean);
-          const runtimeAfter = revision.spec?.serviceAccountName || revision.spec?.template?.spec?.serviceAccountName || '';
-          if (!runtimeAfter || runtimeAfter !== runtimeBefore) throw new Error(`runtime service account changed: ${runtimeBefore} -> ${runtimeAfter}`);
-
-          const container = revision.spec?.containers?.[0] || revision.spec?.template?.spec?.containers?.[0] || {};
-          const env = Array.isArray(container.env) ? container.env : [];
-          const source = env.find((e) => e.name === 'PROOFFLEET_SOURCE_REVISION')?.value || '';
-          if (source !== expectedSha) throw new Error(`source revision mismatch: expected ${expectedSha}, got ${source || '<missing>'}`);
-          const envAfterNames = new Set(env.map((e) => e.name).filter(Boolean));
+          const envAfter = new Set(revision.environmentNames);
           for (const name of envBefore) {
-            if (!envAfterNames.has(name)) throw new Error(`upstream environment variable disappeared during merge deploy: ${name}`);
+            if (!envAfter.has(name)) {
+              throw new Error(`upstream environment variable disappeared during merge deploy: ${name}`);
+            }
           }
 
-          const image = String(container.image || '');
-          const expectedRuntimeImage = `${process.env.GCP_REGION}-docker.pkg.dev/${process.env.GCP_PROJECT_ID}/${process.env.PROOFFLEET_ARTIFACT_REPOSITORY}/${process.env.PROOFFLEET_CLOUDRUN_SERVICE}@${expectedRuntimeDigest}`;
-          if (image !== expectedRuntimeImage) {
-            throw new Error(`revision image is not the registry-proven linux/amd64 manifest ${expectedRuntimeDigest}: ${image}`);
+          const executionIdentity = JSON.parse(fs.readFileSync(
+            process.env.RUNNER_TEMP + '/candidate-execution-identity.json',
+            'utf8',
+          ));
+          const credentialEvidence = JSON.parse(fs.readFileSync(
+            process.env.RUNNER_TEMP + '/gcp-credential-evidence.json',
+            'utf8',
+          ));
+          if (credentialEvidence.githubExecutionIdentityHash !== executionIdentity.identityHash) {
+            throw new Error('credential evidence is bound to a different GitHub execution identity');
+          }
+          if (credentialEvidence.cloudRunServiceUid !== service.serviceUid) {
+            throw new Error('Cloud Run service uid differs between credential probe and deployment readback');
+          }
+          if (credentialEvidence.cloudRunRuntimeServiceAccount !== revision.runtimeServiceAccount) {
+            throw new Error('runtime service account differs between credential probe and revision readback');
           }
 
-          const ready = Array.isArray(revision.status?.conditions)
-            ? revision.status.conditions.some((c) => c.type === 'Ready' && String(c.status).toLowerCase() === 'true')
-            : false;
-          if (!ready) throw new Error('candidate revision is not provider-Ready');
-
-          const traffic = Array.isArray(service.status?.traffic) ? service.status.traffic : [];
-          const candidateTraffic = traffic.filter((t) => t.revisionName === revision.metadata?.name);
-          const percent = candidateTraffic.reduce((sum, t) => sum + Number(t.percent || 0), 0);
-          if (percent !== 0) throw new Error(`candidate revision unexpectedly receives ${percent}% normal traffic`);
-
-          const taggedTarget = candidateTraffic.find((t) => t.tag === candidateTag);
-          const taggedUrl = String(taggedTarget?.url || '');
-          if (!/^https:\/\//.test(taggedUrl)) throw new Error(`candidate tag URL missing for ${candidateTag}`);
-
-          const labels = revision.metadata?.labels || {};
-          if (labels['prooffleet-source-sha'] !== expectedSha) throw new Error('candidate revision source label mismatch');
-          if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('candidate revision marker label missing');
-
-          const receipt = {
-            schemaVersion: 'prooffleet.gcp-deploy-candidate.v2',
+          const receipt = sealReceipt({
+            schemaVersion: 'prooffleet.gcp-deploy-candidate.v3',
             outcome: 'OBSERVED_NO_TRAFFIC_CANDIDATE',
             projectId: process.env.GCP_PROJECT_ID,
             region: process.env.GCP_REGION,
             service: process.env.PROOFFLEET_CLOUDRUN_SERVICE,
-            sourceRevision: expectedSha,
-            revisionName: revision.metadata?.name || null,
-            imageDigest: expectedRuntimeDigest,
-            imageIndexDigest: expectedIndexDigest,
-            runtimeImageDigest: expectedRuntimeDigest,
+            sourceRevision: expectedSourceRevision,
+            revisionName: revision.revisionName,
+            revisionUid: revision.revisionUid,
+            serviceUid: service.serviceUid,
+            imageDigest: runtimeImageDigest,
+            imageIndexDigest,
+            runtimeImageDigest,
             runtimePlatform: 'linux/amd64',
             imageIndexToRuntimeManifestVerified: true,
-            runtimeServiceAccount: runtimeAfter,
+            deployResponseSha256: fs.readFileSync(process.env.RUNNER_TEMP + '/candidate-deploy-response-hash.txt', 'utf8').trim(),
+            revisionReadbackSha256: revision.responseSha256,
+            serviceReadbackSha256: service.responseSha256,
+            runtimeServiceAccount: revision.runtimeServiceAccount,
             priorEnvironmentNamesPreserved: true,
             providerReady: true,
-            trafficPercent: percent,
+            trafficPercent: service.trafficPercent,
             candidateTag,
-            candidateUrl: taggedUrl,
+            candidateUrl: service.candidateUrl,
+            githubExecutionIdentityHash: executionIdentity.identityHash,
+            githubRepositoryId: executionIdentity.repositoryId,
+            githubRepositoryOwnerId: executionIdentity.repositoryOwnerId,
+            githubActorId: executionIdentity.actorId,
+            githubRunId: executionIdentity.runId,
+            githubRunAttempt: executionIdentity.runAttempt,
+            credentialEvidenceHash: credentialEvidence.evidenceHash,
+            credentialConfigSha256: credentialEvidence.credentialConfigSha256,
+            accessTokenSha256: credentialEvidence.accessTokenSha256,
+            credentialCloudRunResponseSha256: credentialEvidence.cloudRunResponseSha256,
             httpHealthObserved: false,
             adkCanaryEligible: false,
             adkCanaryObserved: false,
             adkCanaryStatus: 'UNKNOWN',
             observedAt: new Date().toISOString(),
-          };
+          });
           fs.writeFileSync('gcp-deploy-candidate-receipt.json', JSON.stringify(receipt, null, 2) + '\n');
-          fs.writeFileSync(process.env.RUNNER_TEMP + '/candidate-url.txt', taggedUrl + '\n');
-          console.log(JSON.stringify(receipt, null, 2));
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/candidate-url.txt', service.candidateUrl + '\n');
+          console.log(`[candidate-readback] revision=${receipt.revisionName} revision_uid=${receipt.revisionUid} service_uid=${receipt.serviceUid} receipt_hash=${receipt.receiptHash}`);
           NODE
 
       - name: Smoke exact tagged candidate over HTTP before promotion
@@ -437,8 +538,9 @@ jobs:
           curl --fail --silent --show-error --max-time 5 \
             "$CANDIDATE_URL/api/runtime/adk-canary" > "$RUNNER_TEMP/candidate-adk-canary.json"
 
-          node - "$EXPECTED_SOURCE_REVISION" <<'NODE'
-          const fs = require('fs');
+          node --input-type=module - "$EXPECTED_SOURCE_REVISION" <<'NODE'
+          import fs from 'node:fs';
+          import { sealReceipt } from './scripts/authority-evidence.mjs';
           const [expectedSourceRevision] = process.argv.slice(2);
           const healthPath = process.env.RUNNER_TEMP + '/candidate-health.json';
           const canaryPath = process.env.RUNNER_TEMP + '/candidate-adk-canary.json';
@@ -473,25 +575,66 @@ jobs:
           }
 
           const receiptPath = 'gcp-deploy-candidate-receipt.json';
-          const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-          receipt.httpHealthObserved = true;
-          receipt.healthEndpoint = '/api/health';
-          receipt.healthObservedAt = new Date().toISOString();
-          receipt.adkCanaryEligible = true;
-          receipt.adkCanaryEndpoint = '/api/runtime/adk-canary';
-          receipt.adkCanaryStatus = canary.status;
-          receipt.adkCanaryObserved = canary.status === 'OBSERVED';
+          const current = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          current.httpHealthObserved = true;
+          current.healthEndpoint = '/api/health';
+          current.healthObservedAt = new Date().toISOString();
+          current.adkCanaryEligible = true;
+          current.adkCanaryEndpoint = '/api/runtime/adk-canary';
+          current.adkCanaryStatus = canary.status;
+          current.adkCanaryObserved = canary.status === 'OBSERVED';
           if (canary.status === 'OBSERVED') {
-            receipt.adkCanaryReceipt = canary.receipt;
+            current.adkCanaryReceipt = canary.receipt;
           }
-          fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
-          console.log('[candidate-smoke] exact tagged candidate passed /api/health and source-bound ADK canary eligibility readback with zero normal traffic');
+          const sealed = sealReceipt(current);
+          fs.writeFileSync(receiptPath, JSON.stringify(sealed, null, 2) + '\n');
+          console.log(`[candidate-smoke] health=true adk_status=${sealed.adkCanaryStatus} receipt_hash=${sealed.receiptHash}`);
           NODE
 
       - name: Upload candidate deployment receipt
+        id: candidate_receipt_artifact
         uses: actions/upload-artifact@v4
         with:
-          name: prooffleet-gcp-deploy-candidate-${{ env.EXPECTED_SOURCE_REVISION }}
+          name: prooffleet-gcp-deploy-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: gcp-deploy-candidate-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Bind candidate receipt artifact id and digest to execution identity
+        shell: bash
+        env:
+          CANDIDATE_ARTIFACT_ID: ${{ steps.candidate_receipt_artifact.outputs.artifact-id }}
+          CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate_receipt_artifact.outputs.artifact-digest }}
+          CANDIDATE_ARTIFACT_NAME: prooffleet-gcp-deploy-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { buildArtifactBinding } from './scripts/authority-evidence.mjs';
+          const receipt = JSON.parse(fs.readFileSync('gcp-deploy-candidate-receipt.json', 'utf8'));
+          const executionIdentity = JSON.parse(fs.readFileSync(
+            process.env.RUNNER_TEMP + '/candidate-execution-identity.json',
+            'utf8',
+          ));
+          const binding = buildArtifactBinding({
+            executionIdentity,
+            receiptHash: receipt.receiptHash,
+            artifactName: process.env.CANDIDATE_ARTIFACT_NAME,
+            artifactId: process.env.CANDIDATE_ARTIFACT_ID,
+            artifactDigest: process.env.CANDIDATE_ARTIFACT_DIGEST,
+          });
+          fs.writeFileSync(
+            'gcp-deploy-candidate-artifact-binding.json',
+            JSON.stringify(binding, null, 2) + '\n',
+            'utf8',
+          );
+          console.log(`[candidate-artifact-binding] artifact_id=${binding.artifactId} artifact_digest=${binding.artifactDigest} binding_hash=${binding.bindingHash}`);
+          NODE
+
+      - name: Upload candidate artifact binding
+        uses: actions/upload-artifact@v4
+        with:
+          name: prooffleet-gcp-deploy-candidate-binding-${{ github.run_id }}-${{ github.run_attempt }}
+          path: gcp-deploy-candidate-artifact-binding.json
           if-no-files-found: error
           retention-days: 30
