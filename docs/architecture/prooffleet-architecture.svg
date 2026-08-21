@@ -11,13 +11,13 @@
 </defs>
 <rect width="1600" height="1100" fill="white"/>
 <text x="800" y="48" text-anchor="middle" class="title">ProofFleet — Evidence-First Fortified Enterprise Fleet</text>
-<text x="800" y="78" text-anchor="middle" class="subtitle">Gemini 3.7 · explicit consent · authoritative readback · independent verification · live GCP proof pending</text>
+<text x="800" y="78" text-anchor="middle" class="subtitle">Google ADK + Gemini 3.7 · explicit consent · authoritative readback · live Cloud Run proof observed</text>
 
 <!-- Entry -->
 <rect x="55" y="110" width="460" height="210" rx="22" class="zone" stroke="#bfdbfe"/>
 <text x="80" y="140" class="zlabel">Entry + Google AI</text>
 <rect x="85" y="175" width="145" height="54" class="box"/><text x="157" y="198" text-anchor="middle" class="text">Human Operator</text><text x="157" y="216" text-anchor="middle" class="small">explicit approval</text>
-<rect x="290" y="175" width="185" height="54" class="box blue"/><text x="382" y="198" text-anchor="middle" class="text">Google GenAI SDK</text><text x="382" y="216" text-anchor="middle" class="small">gemini-3.7-flash</text>
+<rect x="290" y="175" width="185" height="54" class="box blue"/><text x="382" y="198" text-anchor="middle" class="text">Google ADK</text><text x="382" y="216" text-anchor="middle" class="small">gemini-3.7-flash</text>
 <rect x="85" y="250" width="160" height="48" class="box"/><text x="165" y="279" text-anchor="middle" class="text">React + TypeScript UI</text>
 <rect x="290" y="250" width="185" height="48" class="box green"/><text x="382" y="279" text-anchor="middle" class="text">Express API + FleetRunner</text>
 <path d="M157 229 L165 250" class="line"/><path d="M245 274 L290 274" class="line"/>
@@ -27,8 +27,8 @@
 <text x="570" y="140" class="zlabel">8 Core Roles — enforced authority separation</text>
 
 <g>
-<rect x="575" y="175" width="210" height="70" class="box blue"/><text x="680" y="198" text-anchor="middle" class="text">1 Orchestrator</text><text x="680" y="218" text-anchor="middle" class="small">Gemini 3.7 · planning only</text><text x="680" y="236" text-anchor="middle" class="tiny">no final verdict</text>
-<rect x="820" y="175" width="210" height="70" class="box blue"/><text x="925" y="198" text-anchor="middle" class="text">2 Scout</text><text x="925" y="218" text-anchor="middle" class="small">Gemini 3.7 · context</text><text x="925" y="236" text-anchor="middle" class="tiny">ungrounded without real tool</text>
+<rect x="575" y="175" width="210" height="70" class="box blue"/><text x="680" y="198" text-anchor="middle" class="text">1 Orchestrator</text><text x="680" y="218" text-anchor="middle" class="small">ADK + Gemini 3.7 · planning</text><text x="680" y="236" text-anchor="middle" class="tiny">no final verdict</text>
+<rect x="820" y="175" width="210" height="70" class="box blue"/><text x="925" y="198" text-anchor="middle" class="text">2 Scout</text><text x="925" y="218" text-anchor="middle" class="small">ADK + Gemini 3.7 · context</text><text x="925" y="236" text-anchor="middle" class="tiny">ungrounded without real tool</text>
 <rect x="1065" y="175" width="210" height="70" class="box"/><text x="1170" y="198" text-anchor="middle" class="text">3 Builder</text><text x="1170" y="218" text-anchor="middle" class="small">deterministic-runtime</text><text x="1170" y="236" text-anchor="middle" class="tiny">artifact preparation</text>
 <rect x="1310" y="175" width="205" height="70" class="box"/><text x="1412" y="198" text-anchor="middle" class="text">4 Analyst</text><text x="1412" y="218" text-anchor="middle" class="small">deterministic-runtime</text><text x="1412" y="236" text-anchor="middle" class="tiny">no fake confidence score</text>
 <rect x="575" y="285" width="210" height="70" class="box"/><text x="680" y="308" text-anchor="middle" class="text">5 Sentinel</text><text x="680" y="328" text-anchor="middle" class="small">deterministic-runtime</text><text x="680" y="346" text-anchor="middle" class="tiny">security + permissions</text>
@@ -57,12 +57,12 @@
 <!-- GCP -->
 <rect x="845" y="500" width="700" height="285" rx="22" class="zone" stroke="#fde68a"/>
 <text x="870" y="530" class="zlabel">Google Cloud provider boundaries</text>
-<rect x="880" y="565" width="310" height="58" class="box amber"/><text x="1035" y="588" text-anchor="middle" class="text">GitHub OIDC / Workload Identity Federation</text><text x="1035" y="608" text-anchor="middle" class="small">manual live-proof workflow</text>
-<rect x="1225" y="565" width="280" height="58" class="box amber"/><text x="1365" y="588" text-anchor="middle" class="text">Cloud Run</text><text x="1365" y="608" text-anchor="middle" class="small">service + revision readback</text>
-<rect x="880" y="660" width="310" height="58" class="box amber"/><text x="1035" y="683" text-anchor="middle" class="text">Firestore</text><text x="1035" y="703" text-anchor="middle" class="small">operation-bound effect + readback</text>
-<rect x="1225" y="660" width="280" height="58" class="box red"/><text x="1365" y="683" text-anchor="middle" class="text">Live provider OBSERVED receipt</text><text x="1365" y="703" text-anchor="middle" class="small">PENDING — not claimed yet</text>
-<path d="M1190 594 L1225 594" class="line"/><path d="M1035 623 L1035 660" class="line"/><path d="M1190 689 L1225 689" class="dash"/>
-<path d="M785 607 L880 689" class="line"/><text x="820" y="630" class="tiny">explicit consent only</text>
+<rect x="880" y="555" width="310" height="66" class="box amber"/><text x="1035" y="578" text-anchor="middle" class="text">GitHub OIDC / WIF</text><text x="1035" y="598" text-anchor="middle" class="small">short-lived deploy identity</text><text x="1035" y="614" text-anchor="middle" class="tiny">no SA JSON key</text>
+<rect x="1225" y="555" width="280" height="66" class="box green"/><text x="1365" y="578" text-anchor="middle" class="text">Cloud Run candidate</text><text x="1365" y="598" text-anchor="middle" class="small">revision readback · OBSERVED</text><text x="1365" y="614" text-anchor="middle" class="tiny">0% normal traffic</text>
+<rect x="880" y="650" width="310" height="66" class="box green"/><text x="1035" y="673" text-anchor="middle" class="text">Artifact Registry</text><text x="1035" y="693" text-anchor="middle" class="small">OCI index → linux/amd64 child</text><text x="1035" y="709" text-anchor="middle" class="tiny">registry bytes re-hashed</text>
+<rect x="1225" y="650" width="280" height="66" class="box amber"/><text x="1365" y="673" text-anchor="middle" class="text">Remaining provider boundary</text><text x="1365" y="693" text-anchor="middle" class="small">Firestore not OBSERVED</text><text x="1365" y="709" text-anchor="middle" class="tiny">ADK live canary NOT_RUN</text>
+<path d="M1190 588 L1225 588" class="line"/><path d="M1035 621 L1035 650" class="line"/><path d="M1190 683 L1225 683" class="line"/>
+<path d="M785 607 L880 588" class="line"/><text x="820" y="580" class="tiny">explicit authority</text>
 
 <!-- Evidence -->
 <rect x="180" y="835" width="1240" height="215" rx="22" class="zone" stroke="#ddd6fe"/>
@@ -74,8 +74,8 @@
 <rect x="1170" y="935" width="200" height="40" class="box amber"/><text x="1270" y="960" text-anchor="middle" class="small">BLOCKED_BY_MISSING_EVIDENCE</text>
 <rect x="1170" y="985" width="200" height="40" class="box red"/><text x="1270" y="1010" text-anchor="middle" class="text">CONTRADICTED</text>
 <path d="M580 931 L640 931" class="line"/><path d="M860 931 L920 931" class="line"/><path d="M1120 931 L1170 905" class="line"/><path d="M1120 931 L1170 955" class="line"/><path d="M1120 931 L1170 1005" class="line"/>
-<path d="M1035 718 L1035 815 L405 815 L405 900" class="line"/><text x="770" y="805" class="tiny">FIRESTORE_READBACK</text>
-<path d="M1365 623 L1365 805 L580 805 L580 900" class="line"/><text x="1170" y="795" class="tiny">CLOUD_RUN_READBACK + declared source SHA</text>
+<path d="M1365 621 L1365 805 L580 805 L580 900" class="line"/><text x="1135" y="795" class="tiny">CLOUD_RUN_READBACK + declared source SHA</text>
+<path d="M1035 716 L1035 815 L405 815 L405 900" class="line"/><text x="745" y="805" class="tiny">registry / external-effect evidence enters only after authoritative readback</text>
 
 <text x="800" y="1080" text-anchor="middle" class="subtitle">ProofFleet does not ask you to trust autonomous agents. It gives you evidence to verify what actually happened.</text>
 </svg>

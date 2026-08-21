@@ -1,76 +1,76 @@
 # ProofFleet — Autonomous Agents You Can Verify
 
-ProofFleet is an evidence-first multi-agent engineering prototype built for the **Google All Things Agentic Hackathon / Fortified Enterprise Fleet** track.
+ProofFleet is an evidence-first multi-agent system built for the **Google All Things Agentic Hackathon / Fortified Enterprise Fleet** track.
 
-The central idea is simple: an agent saying that an action succeeded is **not** proof that the action happened. ProofFleet separates planning, execution, consent, verification and judgment, then requires authoritative readback before an external effect may count as verified truth.
+The core rule is deliberately strict: **an agent saying “done” is not proof that anything happened.** ProofFleet separates planning, execution, explicit human consent, authoritative provider readback, evidence sealing, independent verification, and final judgment so that missing evidence stays missing instead of being painted green.
 
 > **ProofFleet doesn't ask you to trust autonomous agents. It gives you evidence to verify them.**
 
-## Current status
+## Judge in 90 seconds
 
-The active hardening candidate lives on:
+The fastest evidence-first review path is:
 
-```text
-hardening/fortified-fleet
-```
+1. **Start with the exact application source:** `f432b111a621a4a57afe229b0f50fbb129aaa164`.
+2. **Reproduce the software chain:** ProofFleet CI Run #273 passed TypeScript, **42 test files / 220 tests**, truth guards, production build, authenticated HTTP E2E, exact Docker runtime smoke, revision receipt, and high/critical dependency audit.
+3. **Inspect the live Google Cloud proof:** Candidate Deploy Run #12 (`32516371741`) created Cloud Run revision `prooffleet-00008-lux` at **0% normal traffic** and independently read it back.
+4. **Follow the supply-chain identity:** source SHA → immutable OCI image index → exact `linux/amd64` child manifest → Cloud Run revision readback.
+5. **Check the truth boundary:** tagged `/api/health` is observed; ADK canary is eligible but still **`NOT_RUN`**; Firestore live effect is prepared but not claimed `OBSERVED`; Agent Search grounding remains **`NOT_CONFIGURED`**.
 
-PR #1 remains Draft. `main` is intentionally not treated as the final hackathon candidate yet.
+The live candidate receipt is `prooffleet.gcp-deploy-candidate.v2`, uploaded by Run #12 as GitHub Actions artifact `9458987801`.
 
-The repository contains a fully automated local/CI verification chain and a **manual-only** Google Cloud live-proof lane. The live Google Cloud lane is designed to fail closed until real project, Workload Identity Federation, Cloud Run and Firestore identities are configured.
+For a criterion-by-criterion review, open [`docs/JURY.md`](docs/JURY.md). For a clean unedited demo plan, open [`docs/DEMO.md`](docs/DEMO.md).
 
-**No live Google Cloud success should be inferred merely from this README, unit tests, adapter code or a green local CI run.** Provider success requires a real Google Cloud API readback and a live-proof receipt.
+## Current evidence status
+
+| Claim | Status | Authority |
+|---|---|---|
+| Application regression chain | **CI-PROVEN** | CI #273, exact source + synthetic merge receipt |
+| Cloud Run candidate deployment | **LIVE OBSERVED** | WIF deploy + independent Cloud Run readback |
+| Candidate source/revision binding | **LIVE OBSERVED** | source SHA, labels, declared source env, exact revision |
+| OCI index → runtime manifest | **LIVE OBSERVED** | registry raw bytes + SHA-256 + exact `linux/amd64` child |
+| Tagged candidate HTTP health | **LIVE OBSERVED** | exact candidate URL `/api/health` |
+| Candidate normal traffic | **0%** | Cloud Run service traffic readback |
+| Production promotion | **NOT PERFORMED** | promotion workflow skipped |
+| ADK canary eligibility | **OBSERVED** | candidate read-only canary endpoint |
+| ADK/Gemini live canary | **`NOT_RUN`** | no stronger claim is made |
+| Firestore live effect | **PREPARED / NOT OBSERVED** | manual, bounded workflow exists |
+| Agent Search grounding | **`NOT_CONFIGURED`** | intentionally dormant; no paid call needed |
+
+PR #1 remains Draft. `main` remains unchanged.
 
 ---
 
 ## Architecture at a glance
 
-```mermaid
-flowchart LR
-    U[Human Operator] --> UI[React / TypeScript UI]
-    UI --> API[Express Runtime]
+![ProofFleet architecture](docs/architecture/prooffleet-architecture.svg)
 
-    GM[Google GenAI SDK\ngemini-3.7-flash] --> O[Orchestrator]
-    GM --> S[Scout]
+Source diagram: [`docs/architecture/prooffleet-architecture.mmd`](docs/architecture/prooffleet-architecture.mmd).
 
-    API --> O
-    O --> S
-    S --> B[Builder]
-    B --> A[Analyst]
-    A --> SE[Sentinel]
-    SE --> G[Gatekeeper]
-    G --> C{Explicit Consent}
-    C -->|approved| OP[Operator]
-    C -->|rejected| J[Judge]
-
-    OP --> EX[OperationExecutor]
-    EX -->|readback before write/retry| FS[(Firestore)]
-    FS -->|authoritative readback| EV[Evidence + Receipts]
-
-    API --> CR[Cloud Run Readback]
-    CR --> EV
-    EV --> V[Independent Verifier]
-    V --> J[Non-mutating Judge]
-
-    J --> R1[VERIFIED]
-    J --> R2[BLOCKED_BY_MISSING_EVIDENCE]
-    J --> R3[CONTRADICTED]
-```
-
-Important boundaries:
+The runtime enforces these boundaries:
 
 - **Actor != Verifier != Judge**
-- Gemini output is agent context/output, not authoritative external-world proof
-- memory/context is advisory and cannot satisfy runtime proof
-- SHA-256 proves byte/integrity relationships, not external-world truth
+- eight concrete core roles have explicit authority boundaries
+- Google ADK / Gemini reasoning is context or `AGENT_OUTPUT`, not external-world proof
+- memory is advisory and cannot satisfy runtime-required evidence
 - write/execute operations require an operation-bound consent grant
-- ambiguous mutations require authoritative readback before retry
-- a missing provider readback means **no blind write**
+- ambiguous mutations use readback-before-retry
+- unavailable readback means **no blind write**
+- only authoritative runtime evidence can satisfy a runtime-required Judge proof requirement
+
+### Eight core roles
+
+1. **Orchestrator** — Google ADK / Gemini planning, no final verdict authority
+2. **Scout** — Google ADK / Gemini context, explicitly ungrounded without a real source tool
+3. **Builder** — deterministic artifact preparation
+4. **Analyst** — deterministic analysis, no invented confidence score
+5. **Sentinel** — security and permission checks
+6. **Auditor** — integrity checks, cannot replace the Judge
+7. **Gatekeeper** — concrete `OperationSpec` + explicit consent boundary
+8. **Operator** — authorized effects only, cannot self-judge
 
 ---
 
-# Reproducible local verification
-
-These are the canonical testing instructions used by GitHub Actions.
+# Reproduce the exact software chain
 
 ## Prerequisites
 
@@ -78,42 +78,28 @@ These are the canonical testing instructions used by GitHub Actions.
 - Node.js **22.x**
 - npm **10.x**
 
-No Google Cloud credentials or Gemini key are required for the local verification chain. Tests that touch provider contracts use test-only doubles; the production runtime remains fail-closed when real provider configuration is absent.
+No Google Cloud credentials or Gemini key are required for the local verification chain. Provider-facing test contracts use test-only doubles; production runtime paths remain fail-closed when real configuration is absent.
 
-## 1. Clone and select the candidate
+## Exact live-proven application source
 
 ```bash
 git clone https://github.com/OuroborosCollective/Prooffleet.git
 cd Prooffleet
-git checkout hardening/fortified-fleet
-```
-
-For an auditable reproduction, replace the branch checkout with the exact source SHA shown by the latest ProofFleet CI revision receipt.
-
-## 2. Install the immutable dependency graph
-
-```bash
+git checkout f432b111a621a4a57afe229b0f50fbb129aaa164
 npm ci
-```
-
-`package-lock.json` is committed and is the installation contract. Do not replace `npm ci` with an unconstrained dependency refresh when reproducing a recorded CI result.
-
-## 3. Run the canonical verification chain
-
-```bash
 npm run verify:ci
 ```
 
-`verify:ci` performs, in order:
+`verify:ci` performs:
 
 1. TypeScript contract check (`tsc --noEmit`)
-2. unit + adversarial regression suite (Vitest)
+2. unit + adversarial regression suite
 3. production truth guards
 4. production Vite + esbuild build
-5. a real started production-server HTTP smoke on an injected runtime port
-6. authenticated production consent HTTP E2E
+5. real started production-server HTTP smoke on an injected runtime port
+6. authenticated production mission / concurrency / reset / consent HTTP E2E
 
-A passing local chain proves those exact contracts under that local environment. It **does not** prove a Google Cloud service is provisioned or that an external cloud mutation occurred.
+A passing local chain proves those software contracts in that environment. It does **not** substitute for provider-side Google Cloud evidence.
 
 Useful narrower commands:
 
@@ -127,90 +113,161 @@ npm run build
 
 # Run the application locally
 
-## Development mode
+Development:
 
 ```bash
 npm run dev
 ```
 
-Default local URL:
-
-```text
-http://localhost:3000
-```
-
-## Production build + production server
+Production build/runtime:
 
 ```bash
 npm run build
 NODE_ENV=production PORT=3000 npm start
-```
-
-Health check:
-
-```bash
 curl -fsS http://127.0.0.1:3000/api/health
 ```
 
-Cloud Run injects `PORT`; the server honors that value instead of assuming port 3000.
+Cloud Run injects `PORT`; the server honors the managed-runtime value.
+
+---
+
+# Authority, consent, idempotency, and evidence
+
+For a write/execute operation:
+
+1. Gatekeeper derives a concrete `OperationSpec`.
+2. Consent is bound to that exact operation hash.
+3. A human explicitly approves or rejects.
+4. Only an `APPROVED` execution grant can authorize the Operator.
+5. `OperationExecutor` performs readback before mutation or retry.
+6. Matching existing target state becomes `already_applied`.
+7. Conflicting identity fails closed.
+8. Unavailable readback does not authorize a write.
+9. Only readback-observed durable success is cached as final.
+
+The adversarial regression suite includes **50 parallel executions with one operation ID**, which must result in exactly one apply.
+
+The final Judge vocabulary is intentionally small:
+
+```text
+VERIFIED
+BLOCKED_BY_MISSING_EVIDENCE
+CONTRADICTED
+```
+
+`VERIFIED` is never a synonym for “an agent returned success.” A static candidate, model output, memory entry, or hash-valid internal artifact cannot satisfy a runtime claim that requires an authoritative external readback.
+
+SHA-256 is used to prove byte and identity relationships. It does **not** by itself prove external-world truth.
+
+---
+
+# Google agent and cloud stack
+
+## Google ADK + Gemini
+
+Canonical reasoning contract:
+
+```text
+framework: Google ADK
+model:     gemini-3.7-flash
+```
+
+Only Orchestrator and Scout receive the reasoning provider. The ADK layer has no tool, mutation, consent, evidence-sealing, or Judge authority.
+
+The deployed candidate's read-only canary endpoint reports:
+
+```text
+eligible: true
+status:   NOT_RUN
+```
+
+That is intentionally **not** upgraded into a live-model claim.
+
+## Live Cloud Run candidate proof
+
+Exact source:
+
+```text
+f432b111a621a4a57afe229b0f50fbb129aaa164
+```
+
+Candidate Run #12 observed:
+
+```text
+project:         project-b29d4703-a302-4b05-b2e
+region:          europe-west1
+service:         prooffleet
+revision:        prooffleet-00008-lux
+candidate tag:   pf-f432b111a621
+normal traffic:  0%
+```
+
+The v2 receipt proves both container identities rather than conflating them:
+
+```text
+OCI image index:
+sha256:0ad47bce1a90bb62c927c0b89f085c4d83171bfb96f626f708f126a69bc30d6d
+
+linux/amd64 runtime manifest:
+sha256:e5d22049a6994087552004064c7a1acf96e440618b5562fdb346282f8b88dc81
+```
+
+Registry raw bytes are hashed back to the immutable index digest; exactly one supported `linux/amd64` child manifest is selected; independent Cloud Run revision readback must report that exact child manifest. Runtime service account and inherited environment-variable names are also checked for preservation before the receipt can proceed to HTTP smoke.
+
+## Manual Firestore live-proof lane
+
+Workflow:
+
+```text
+.github/workflows/gcp-live-proof.yml
+```
+
+It is deliberately `workflow_dispatch`-only and requires the exact confirmation phrase:
+
+```text
+I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE
+```
+
+The lane first requires authoritative Cloud Run source readback, then constructs an operation-bound Firestore effect, explicit consent grant, idempotent executor, and authoritative Firestore readback. Only `applied` or `already_applied` with `FIRESTORE_READBACK` bound to the same source revision can produce an `OBSERVED` live-proof receipt.
+
+**No Firestore `OBSERVED` receipt is claimed yet.**
+
+## Other Google Cloud adapters
+
+ProofFleet includes fail-closed adapters/runbooks for Firestore, Secret Manager, Pub/Sub, Cloud Run, Model Armor, Vertex AI Agent Engine/ADK, and OpenTelemetry. See [`server/adapters/gcp/README.md`](server/adapters/gcp/README.md).
+
+An adapter reports `NOT_PROVISIONED` / failed readback when configuration, API, dependency, IAM, or real resource is missing. Prepared adapter code is not presented as a live managed-service claim.
+
+## Agent Search grounding
+
+The grounding lane is intentionally dormant:
+
+```text
+NOT_CONFIGURED
+```
+
+Grounding evidence cannot become a Judge verdict by itself, and no paid Agent Search request is required merely to make the submission look more complete.
 
 ---
 
 # Environment configuration
 
-Start from the documented template:
+Start from:
 
 ```bash
 cp .env.example .env
 ```
 
-Never commit `.env`, Workload Identity credential artifacts or live-proof receipts.
+Never commit `.env`, Workload Identity credential artifacts, operator credentials, or live-proof receipts.
 
-## Gemini
+Common runtime variables include:
 
 ```text
 GEMINI_API_KEY
-```
-
-The canonical ProofFleet LLM contract is:
-
-```text
-provider: google-genai (@google/genai)
-model:    gemini-3.7-flash
-```
-
-Only the **Orchestrator** and **Scout** receive the Gemini provider in the real fleet runtime. The other six core roles are declared as `deterministic-runtime` because they do not make Gemini calls.
-
-Gemini output is deliberately not treated as authoritative runtime truth:
-
-- Orchestrator planning text is emitted as `AGENT_OUTPUT` together with provider, model ID and SHA-256 output hash.
-- Scout Gemini-only context is explicitly marked **ungrounded** and cannot manufacture citations. `grounded=true` is reserved for a real grounding-tool result.
-- A configured Gemini provider failure propagates as a real failure; it is not silently converted into an alleged LLM success.
-- With no API key, the supported deterministic fallback is clearly labeled as such.
-
-The model/runtime contract above is code- and CI-verified. A final hackathon claim that Gemini was exercised in the deployed demo must still be backed by a real provider-side run with valid credentials; local contract tests alone are not provider evidence.
-
-## Operator authentication
-
-```text
 PROOFFLEET_OPERATOR_TOKEN
 PROOFFLEET_SESSION_SECRET
 PROOFFLEET_OPERATOR_IDENTITY
-```
-
-Both token and session secret are required before consent decisions can be made in the production HTTP path. Operator identity is derived server-side from the authenticated session; a client request cannot assert its own operator identity.
-
-## Evidence signing
-
-```text
 PROOFFLEET_HMAC_SECRET
-```
-
-If no HMAC secret is configured, ProofFleet does not fabricate a signature. Evidence remains honestly unsigned rather than pretending authentication occurred.
-
-## Google Cloud adapter configuration
-
-```text
 GCP_PROJECT_ID
 GCP_REGION
 PROOFFLEET_CLOUDRUN_SERVICE
@@ -224,133 +281,13 @@ OTEL_ENABLED
 OTEL_EXPORTER_OTLP_ENDPOINT
 ```
 
-Detailed provider/IAM notes are in:
-
-```text
-server/adapters/gcp/README.md
-```
-
-Without real configuration + credentials, adapters report `NOT_PROVISIONED`/failed readback honestly.
+If evidence signing is not configured, ProofFleet leaves evidence honestly unsigned rather than fabricating authentication.
 
 ---
 
-# Evidence and verdict semantics
+# CI revision identity
 
-The final Judge vocabulary is deliberately small:
-
-```text
-VERIFIED
-BLOCKED_BY_MISSING_EVIDENCE
-CONTRADICTED
-```
-
-`VERIFIED` is not a synonym for "an agent returned success".
-
-For runtime claims, ProofFleet can require evidence bound to:
-
-- operation ID
-- mission/revision
-- source revision
-- deployment revision where applicable
-- allowed authoritative source kind
-- recomputing evidence/receipt hashes
-
-Examples of authoritative runtime source kinds include Cloud Run and Firestore readback. A static candidate, agent output or memory entry cannot satisfy a runtime-required proof requirement.
-
----
-
-# Consent and idempotency contracts
-
-For write/execute operations:
-
-1. Gatekeeper derives a concrete `OperationSpec`.
-2. Consent is bound to that exact operation hash.
-3. A human explicitly approves or rejects.
-4. Only an APPROVED execution grant can authorize the Operator.
-5. OperationExecutor performs readback before mutation/retry.
-6. Existing matching target state becomes `already_applied`.
-7. Existing conflicting identity fails closed.
-8. An unavailable readback does not authorize a write.
-9. Only readback-observed durable success is cached as final.
-
-The regression suite includes an adversarial concurrency case where **50 parallel calls with the same operation ID must result in exactly one apply**.
-
----
-
-# Manual Google Cloud live-proof workflow
-
-Workflow:
-
-```text
-.github/workflows/gcp-live-proof.yml
-```
-
-It is intentionally `workflow_dispatch`-only. It does **not** run on push or pull requests.
-
-Authentication uses Google Workload Identity Federation through GitHub OIDC. The workflow does not accept a long-lived service-account JSON key.
-
-Required GitHub repository variables:
-
-```text
-PROOFFLEET_GCP_PROJECT_ID
-PROOFFLEET_GCP_REGION
-PROOFFLEET_GCP_WIF_PROVIDER
-PROOFFLEET_GCP_WIF_SERVICE_ACCOUNT
-PROOFFLEET_CLOUDRUN_SERVICE
-PROOFFLEET_FIRESTORE_COLLECTION
-```
-
-The WIF provider must be the complete provider resource name, for example:
-
-```text
-projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
-```
-
-## Mutation confirmation
-
-The live workflow will not authorize the operation-bound Firestore proof write unless the manual dispatch contains the exact phrase:
-
-```text
-I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE
-```
-
-Even with that phrase, the workflow first performs an authoritative Cloud Run readback and requires the service's declared:
-
-```text
-PROOFFLEET_SOURCE_REVISION
-```
-
-to match the exact GitHub workflow source SHA. An old or unrelated deployment therefore cannot be silently used as proof for the current source candidate.
-
-The live runner writes:
-
-```text
-gcp-live-proof-receipt.json
-```
-
-as a GitHub Actions artifact. Possible live receipt outcomes are:
-
-```text
-OBSERVED
-BLOCKED_BY_MISSING_EVIDENCE
-CONTRADICTED
-```
-
-`OBSERVED` means the configured provider boundaries were actually observed; it is intentionally not a shortcut around the application's independent Judge.
-
----
-
-# CI revision receipts
-
-Pull-request GitHub Actions execute a synthetic merge commit. ProofFleet records this explicitly instead of conflating it with the source branch head.
-
-Receipt schema:
-
-```text
-prooffleet.ci-revision-receipt.v1
-```
-
-Fields include:
+Pull-request Actions test a synthetic merge commit. ProofFleet records source and tested identities separately in `prooffleet.ci-revision-receipt.v1`:
 
 ```text
 sourceHeadSha
@@ -359,50 +296,33 @@ testedCheckoutSha
 testedMergeSha
 ```
 
-When reproducing a CI result, use the exact source head and note that PR compatibility was tested through the recorded synthetic merge SHA.
-
----
-
-# Security / secret hygiene
-
-Generated authentication and evidence artifacts are excluded from both Git and Docker build contexts:
+For CI #273:
 
 ```text
-gha-creds-*.json
-gcp-live-proof-receipt.json
-.env*
+sourceHeadSha:      f432b111a621a4a57afe229b0f50fbb129aaa164
+baseSha:            89302dfbe1ef732ff3962b47ce914a7e299f5075
+testedMergeSha:     a0d12bfa40f10382d8f7c3ee9a6c4ce378c9c523
 ```
 
-Production runtime code is guarded against importing mocks/fakes/test doubles. Test doubles belong under the test boundary only.
+This avoids pretending a PR source SHA and GitHub's tested merge SHA are the same object.
 
 ---
 
-# Hackathon reproducibility notes
+# Hackathon review assets
 
-For judges/testers, the shortest deterministic verification path is:
+- **Jury evidence matrix:** [`docs/JURY.md`](docs/JURY.md)
+- **Unedited demo plan:** [`docs/DEMO.md`](docs/DEMO.md)
+- **Architecture source:** [`docs/architecture/prooffleet-architecture.mmd`](docs/architecture/prooffleet-architecture.mmd)
+- **Architecture render:** [`docs/architecture/prooffleet-architecture.svg`](docs/architecture/prooffleet-architecture.svg)
+- **Live candidate evidence:** PR #1 + Candidate Deploy Run #12 / artifact `9458987801`
 
-```bash
-git clone https://github.com/OuroborosCollective/Prooffleet.git
-cd Prooffleet
-git checkout <EXACT_SUBMITTED_SOURCE_SHA>
-npm ci
-npm run verify:ci
-```
-
-Then, if Google Cloud live-proof access is intentionally provided, compare the submitted source SHA with:
-
-1. the Cloud Run service's declared `PROOFFLEET_SOURCE_REVISION`;
-2. the live Cloud Run readback receipt;
-3. the operation-bound Firestore document/readback;
-4. the corresponding ProofFleet evidence/receipt chain and Judge verdict.
-
-This repository deliberately distinguishes **reproducible software tests** from **provider-side deployment proof**.
+The public Devpost project is updated from the same evidence boundary. A final demo video must still be a real YouTube/Vimeo artifact; this repository does not claim one exists until it does.
 
 ---
 
 ## Origin / disclosure
 
-The project was initially scaffolded through Google AI Studio and exported to this GitHub repository. The hackathon implementation has since been hardened on the dedicated feature branch. Evidence-first architectural ideas reflect prior operational learnings, while this ProofFleet implementation is built as its own hackathon project.
+The project was initially scaffolded through Google AI Studio and exported to this GitHub repository. The hackathon implementation has since been hardened on the dedicated feature branch. Evidence-first architectural ideas reflect prior operational learnings, while this ProofFleet implementation is its own hackathon project.
 
 ## License / use
 
