@@ -167,11 +167,29 @@ async function startServer() {
     });
   });
 
-  // Reset Chain
+  // Evidence reset is a destructive truth-path mutation. It requires both a
+  // deliberate reset intent and the same authenticated operator authority used
+  // by other privileged runtime mutations.
   app.post("/api/evidence/reset", (req, res) => {
+    if (req.get("x-prooffleet-evidence-reset-intent") !== "1") {
+      return res.status(403).json({ error: "evidence reset intent header required" });
+    }
+
+    const operator = operatorSessions.authenticate(req.headers.cookie);
+    if (!operator.configured) {
+      return res.status(503).json({ error: "operator authentication is not provisioned" });
+    }
+    if (!operator.authenticated || !operator.identity) {
+      return res.status(401).json({ error: "authenticated operator session required" });
+    }
+
     fleetRunner.resetEvidence();
     lastVerifiedBlockHash = null;
-    res.json({ success: true, chain: fleetRunner.getLedger().getChain() });
+    res.json({
+      success: true,
+      operatorIdentity: operator.identity,
+      chain: fleetRunner.getLedger().getChain(),
+    });
   });
 
   // Judge: read-only evaluation of a claim against real evidence + receipts
