@@ -214,19 +214,23 @@ jobs:
 
       - name: Deploy tagged candidate revision with zero normal traffic
         id: deploy
-        uses: google-github-actions/deploy-cloudrun@v3
-        with:
-          service: ${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}
-          region: ${{ env.GCP_REGION }}
-          image: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.PROOFFLEET_ARTIFACT_REPOSITORY }}/${{ env.PROOFFLEET_CLOUDRUN_SERVICE }}@${{ steps.build.outputs.digest }}
-          no_traffic: true
-          tag: ${{ steps.identity.outputs.candidate_tag }}
-          env_vars: |-
-            PROOFFLEET_SOURCE_REVISION=${{ env.EXPECTED_SOURCE_REVISION }}
-          env_vars_update_strategy: merge
-          labels: |-
-            prooffleet-source-sha=${{ env.EXPECTED_SOURCE_REVISION }}
-            prooffleet-candidate=true
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          CANDIDATE_TAG: ${{ steps.identity.outputs.candidate_tag }}
+        run: |
+          set -euo pipefail
+          IMMUTABLE_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${PROOFFLEET_ARTIFACT_REPOSITORY}/${PROOFFLEET_CLOUDRUN_SERVICE}@${IMAGE_DIGEST}"
+          gcloud run deploy "$PROOFFLEET_CLOUDRUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --no-traffic \
+            --tag="$CANDIDATE_TAG" \
+            --update-labels="managed-by=github-actions,commit-sha=$GITHUB_SHA,prooffleet-source-sha=$EXPECTED_SOURCE_REVISION,prooffleet-candidate=true" \
+            --format=json \
+            --container=app-container \
+            --image="$IMMUTABLE_IMAGE" \
+            --update-env-vars="PROOFFLEET_SOURCE_REVISION=$EXPECTED_SOURCE_REVISION"
 
       - name: Authoritative candidate revision readback
         shell: bash
