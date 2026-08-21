@@ -11,7 +11,7 @@ describe('GCP WIF bootstrap safety contract', () => {
     expect(source).toContain('APPLY=false');
     expect(source).toContain('--apply)');
     expect(source).toContain('apply_or_plan');
-    expect(source).toContain("log \"dry-run complete");
+    expect(source).toContain('dry-run complete; rerun with --apply');
   });
 
   it('never creates or accepts long-lived service-account JSON keys', () => {
@@ -26,10 +26,26 @@ describe('GCP WIF bootstrap safety contract', () => {
     expect(source).not.toContain('compute@developer.gserviceaccount.com');
   });
 
-  it('restricts GitHub OIDC admission to the exact ProofFleet repository', () => {
-    expect(source).toContain('GITHUB_REPO="OuroborosCollective/Prooffleet"');
-    expect(source).toContain("EXPECTED_CONDITION=\"assertion.repository == '${GITHUB_REPO}'\"");
-    expect(source).toContain('attribute.repository=assertion.repository');
+  it('restricts WIF using immutable repository, owner and actor ids instead of repository names', () => {
+    expect(source).toContain('GITHUB_REPOSITORY_ID="1339097875"');
+    expect(source).toContain('GITHUB_OWNER_ID="266194342"');
+    expect(source).toContain("assertion.repository_id == '${GITHUB_REPOSITORY_ID}'");
+    expect(source).toContain("assertion.repository_owner_id == '${GITHUB_OWNER_ID}'");
+    expect(source).toContain("assertion.actor_id == '${GITHUB_OWNER_ID}'");
+    expect(source).toContain('attribute.repository_id=assertion.repository_id');
+    expect(source).toContain('attribute.repository_owner_id=assertion.repository_owner_id');
+    expect(source).toContain('attribute.actor_id=assertion.actor_id');
+    expect(source).toContain('attribute.repository_id/${GITHUB_REPOSITORY_ID}');
+    expect(source).not.toContain('attribute.repository/${GITHUB_REPO}');
+  });
+
+  it('fails closed if an existing provider still exposes the old mutable-name mapping', () => {
+    expect(source).toContain('immutable-ID issuer/repository/actor restriction');
+    expect(source).toContain("provider.get('attributeMapping')");
+    expect(source).toContain("'attribute.repository_id': 'assertion.repository_id'");
+    expect(source).toContain("'attribute.repository_owner_id': 'assertion.repository_owner_id'");
+    expect(source).toContain("'attribute.actor_id': 'assertion.actor_id'");
+    expect(source).toContain('Existing WIF provider attribute mapping is missing immutable GitHub identity claims.');
   });
 
   it('grants only the current live-proof provider roles', () => {
@@ -51,7 +67,7 @@ describe('GCP WIF bootstrap safety contract', () => {
     expect(source).toContain('Supplied project number does not match Google Cloud readback');
   });
 
-  it('does not silently choose or create a Firestore database location and logs the provider location readback', () => {
+  it('does not silently choose or create a Firestore database location and logs provider location readback', () => {
     expect(source).toContain("gcloud firestore databases describe --database='(default)'");
     expect(source).not.toMatch(/gcloud\s+firestore\s+databases\s+create/i);
     expect(source).toContain("--format='value(locationId)'");
@@ -59,7 +75,7 @@ describe('GCP WIF bootstrap safety contract', () => {
     expect(source).toContain('Create it explicitly in the intended location before live proof.');
   });
 
-  it('requires real project identity, region and Cloud Run service without hardcoding the owner console values', () => {
+  it('requires real project identity, region and Cloud Run service without hardcoding owner console values', () => {
     expect(source).toContain('One of --project-id or --project-number is required.');
     expect(source).toContain('--region and --cloud-run-service are required.');
     expect(source).not.toContain('REGION="europe-west1"');
