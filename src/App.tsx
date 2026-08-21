@@ -12,6 +12,10 @@ import {
   type AdkCanarySnapshot,
 } from "./components/AdkRuntimeCanaryPanel";
 import {
+  GroundingEvidencePanel,
+  type GroundingStatusSnapshot,
+} from "./components/GroundingEvidencePanel";
+import {
   AgentContract,
   Mission,
   EvidenceBlock,
@@ -26,6 +30,7 @@ export default function App() {
   const [pendingConsent, setPendingConsent] = useState<ConsentRequest | null>(null);
   const [telemetry, setTelemetry] = useState<FleetTelemetry | null>(null);
   const [adkCanary, setAdkCanary] = useState<AdkCanarySnapshot | null>(null);
+  const [groundingStatus, setGroundingStatus] = useState<GroundingStatusSnapshot | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(true);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [isSubmittingConsent, setIsSubmittingConsent] = useState<boolean>(false);
@@ -53,6 +58,7 @@ export default function App() {
         consentRes,
         operatorSessionRes,
         adkCanaryRes,
+        groundingStatusRes,
       ] = await Promise.all([
         fetch("/api/agents"),
         fetch("/api/fleet/active-mission"),
@@ -61,6 +67,7 @@ export default function App() {
         fetch("/api/consent/pending"),
         fetch("/api/operator/session"),
         fetch("/api/runtime/adk-canary"),
+        fetch("/api/evidence/grounding/status"),
       ]);
 
       if (agentsRes.ok) {
@@ -104,6 +111,11 @@ export default function App() {
       if (adkCanaryRes.ok) {
         const data = (await adkCanaryRes.json()) as AdkCanarySnapshot;
         setAdkCanary(data);
+      }
+
+      if (groundingStatusRes.ok) {
+        const data = (await groundingStatusRes.json()) as GroundingStatusSnapshot;
+        setGroundingStatus(data);
       }
     } catch (err) {
       console.error("Error fetching fleet data:", err);
@@ -348,6 +360,8 @@ export default function App() {
           onAuthenticate={handleOperatorAuthenticate}
           onRunCanary={handleRunAdkCanary}
         />
+
+        <GroundingEvidencePanel snapshot={groundingStatus} />
 
         {activeMission?.finalVerdict && (
           <TruthVerificationReport mission={activeMission} />

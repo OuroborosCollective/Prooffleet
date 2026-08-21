@@ -4,6 +4,10 @@ import { createServer as createViteServer } from "vite";
 import { FLEET_AGENTS } from "./server/contracts";
 import { fleetRunner } from "./server/fleetRunner";
 import { Judge, IndependentVerifier } from "./server/evidence/index";
+import {
+  createUnconfiguredAgentSearchEvidenceProvider,
+  groundingStatusSnapshot,
+} from "./server/evidence/grounding";
 import { createGcpAdapters } from "./server/adapters/gcp/index";
 import type { ConsentGrant } from "./src/types/index";
 import { OperatorSessionManager } from "./server/security/operatorSession";
@@ -18,6 +22,7 @@ async function startServer() {
 
   const operatorSessions = new OperatorSessionManager(process.env);
   const adkCanary = new AdkRuntimeCanaryController(process.env.PROOFFLEET_SOURCE_REVISION);
+  const groundingProvider = createUnconfiguredAgentSearchEvidenceProvider();
 
   // Letzter echter Verifikationsstand — null solange nie verifiziert wurde.
   let lastVerifiedBlockHash: string | null = null;
@@ -35,6 +40,12 @@ async function startServer() {
   // Read-only ADK canary status. This endpoint never triggers a model call.
   app.get("/api/runtime/adk-canary", (_req, res) => {
     res.json(adkCanary.snapshot());
+  });
+
+  // Read-only Agent Search evidence status. P0 intentionally wires the honest
+  // NOT_CONFIGURED provider only: no Google API call, no credentials and no cost.
+  app.get("/api/evidence/grounding/status", async (_req, res) => {
+    res.json(await groundingStatusSnapshot(groundingProvider));
   });
 
   // Trigger exactly one bounded ADK -> Gemini canary for this process.
