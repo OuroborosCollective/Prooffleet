@@ -211,12 +211,31 @@ export default function App() {
 
   const handleResetChain = async () => {
     try {
-      await fetch("/api/evidence/reset", { method: "POST" });
+      const res = await fetch("/api/evidence/reset", {
+        method: "POST",
+        headers: {
+          "X-ProofFleet-Evidence-Reset-Intent": "1",
+        },
+        credentials: "same-origin",
+      });
+      const data = await res.json();
+      if (!res.ok || data.success !== true) {
+        if (res.status === 401) {
+          setOperatorSession((prev) => ({ ...prev, authenticated: false, identity: null }));
+        } else if (res.status === 503) {
+          setOperatorSession({ configured: false, authenticated: false, identity: null });
+        }
+        setOperatorAuthError(data.error || "Evidence reset failed closed.");
+        return;
+      }
+
+      setOperatorAuthError(null);
       setVerificationResult(null);
       setActiveMission(null);
-      fetchFleetData();
+      await fetchFleetData();
     } catch (err) {
       console.error("Reset failed:", err);
+      setOperatorAuthError("Evidence reset request failed.");
     }
   };
 
