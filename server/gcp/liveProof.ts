@@ -10,8 +10,14 @@ export interface LiveGcpProofPlan {
   serviceName: string;
   collection: string;
   sourceRevision: string;
+  githubRepositoryId: string;
   workflowRunId: string;
-  actorHash: string;
+  workflowRunAttempt: string;
+  githubActorIdHash: string;
+  runnerNameHash: string;
+  runnerOs: string;
+  runnerArch: string;
+  executionContextHash: string;
   mutationApproved: boolean;
   operation: OperationSpec;
 }
@@ -19,6 +25,12 @@ export interface LiveGcpProofPlan {
 function required(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
   if (!value) throw new Error(`${key} is required`);
+  return value;
+}
+
+function requiredNumeric(env: NodeJS.ProcessEnv, key: string): string {
+  const value = required(env, key);
+  if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`${key} must be a positive numeric identity`);
   return value;
 }
 
@@ -41,25 +53,45 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
   const collection = required(env, 'PROOFFLEET_FIRESTORE_COLLECTION');
   const sourceRevision = requireExactGitRevision(required(env, 'PROOFFLEET_SOURCE_REVISION'));
   const githubSha = requireExactGitRevision(required(env, 'GITHUB_SHA'));
-  const workflowRunId = required(env, 'GITHUB_RUN_ID');
-  const actor = required(env, 'GITHUB_ACTOR');
+  const githubRepositoryId = requiredNumeric(env, 'GITHUB_REPOSITORY_ID');
+  const workflowRunId = requiredNumeric(env, 'GITHUB_RUN_ID');
+  const workflowRunAttempt = requiredNumeric(env, 'GITHUB_RUN_ATTEMPT');
+  const githubActorId = requiredNumeric(env, 'GITHUB_ACTOR_ID');
+  const runnerName = required(env, 'RUNNER_NAME');
+  const runnerOs = required(env, 'RUNNER_OS');
+  const runnerArch = required(env, 'RUNNER_ARCH');
   const confirmation = env.PROOFFLEET_LIVE_CONFIRMATION ?? '';
 
   if (!validProjectId(projectId)) throw new Error('GCP_PROJECT_ID is malformed');
   if (!validRegion(region)) throw new Error('GCP_REGION is malformed');
   if (!validResourceLabel(serviceName)) throw new Error('PROOFFLEET_CLOUDRUN_SERVICE is malformed');
   if (!validResourceLabel(collection)) throw new Error('PROOFFLEET_FIRESTORE_COLLECTION is malformed');
-  if (!/^\d+$/.test(workflowRunId)) throw new Error('GITHUB_RUN_ID must be numeric');
   if (sourceRevision !== githubSha) {
     throw new Error('PROOFFLEET_SOURCE_REVISION must equal the exact workflow GITHUB_SHA');
   }
 
-  const actorHash = sha256Hex(actor);
+  const githubActorIdHash = sha256Hex(githubActorId);
+  const runnerNameHash = sha256Hex(runnerName);
+  const executionContextHash = sha256Hex(canonicalJson({
+    sourceRevision,
+    githubRepositoryId,
+    workflowRunId,
+    workflowRunAttempt,
+    githubActorIdHash,
+    runnerNameHash,
+    runnerOs,
+    runnerArch,
+  }));
+
+  // Operation identity intentionally remains stable across a retry attempt of
+  // the same GitHub run. Attempt/runner identity is sealed into the receipt via
+  // executionContextHash, while the durable mutation uses one idempotency key.
   const parameters = {
     proofKind: 'live_firestore_effect',
     sourceRevision,
+    githubRepositoryId,
     workflowRunId,
-    actorHash,
+    githubActorIdHash,
   };
   const parametersHash = sha256Hex(canonicalJson(parameters));
   const missionId = `gcp-live-${workflowRunId}`;
@@ -80,8 +112,14 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
     serviceName,
     collection,
     sourceRevision,
+    githubRepositoryId,
     workflowRunId,
-    actorHash,
+    workflowRunAttempt,
+    githubActorIdHash,
+    runnerNameHash,
+    runnerOs,
+    runnerArch,
+    executionContextHash,
     mutationApproved: confirmation === LIVE_GCP_CONFIRMATION,
     operation: {
       operationId,
