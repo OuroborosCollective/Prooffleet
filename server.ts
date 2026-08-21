@@ -184,6 +184,7 @@ async function startServer() {
     }
 
     fleetRunner.resetEvidence();
+    fleetRunner.getConsentEngine().clearRequests();
     lastVerifiedBlockHash = null;
     res.json({
       success: true,

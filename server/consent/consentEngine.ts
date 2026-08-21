@@ -207,4 +207,13 @@ export class ConsentEngine {
   getAllRequests(): ConsentRequest[] {
     return [...this.requests.values()];
   }
+
+  /**
+   * Destructive runtime reset hook. This does not decide, reject or approve
+   * requests; it invalidates every previously issued request identity so stale
+   * mission authority cannot survive a truth-state reset.
+   */
+  clearRequests(): void {
+    this.requests.clear();
+  }
 }
