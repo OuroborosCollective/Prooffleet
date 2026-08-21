@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ProofFleet Google Cloud bootstrap.
+# ProofFleet Google Cloud live-proof bootstrap.
 #
 # Safety contract:
 # - default mode is read-only/dry-run;
 # - mutations require an explicit --apply flag;
 # - no service-account JSON key is ever created or accepted;
-# - GitHub OIDC/WIF admission is restricted to exactly OuroborosCollective/Prooffleet;
-# - the bootstrap grants only the provider permissions needed by the current
-#   live-proof lane: Cloud Run readback + Firestore read/write;
+# - GitHub OIDC/WIF authorization is bound to immutable repository/owner/actor IDs;
+# - repository names are descriptive only and never sufficient authorization evidence;
+# - the bootstrap grants only Cloud Run readback + Firestore proof write/readback;
 # - Firestore database creation is intentionally NOT automated because database
 #   location is an architectural choice that should not be made implicitly.
 
 GITHUB_REPO="OuroborosCollective/Prooffleet"
+GITHUB_REPOSITORY_ID="1339097875"
+GITHUB_OWNER_ID="266194342"
 POOL_ID="prooffleet-github"
 PROVIDER_ID="prooffleet-repo"
 SERVICE_ACCOUNT_ID="prooffleet-github"
@@ -125,13 +127,13 @@ fi
 
 PROJECT_ID="$RESOLVED_PROJECT_ID"
 PROJECT_NUMBER="$RESOLVED_PROJECT_NUMBER"
-
 SA_EMAIL="${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 POOL_NAME="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}"
 EXPECTED_PROVIDER_NAME="${POOL_NAME}/providers/${PROVIDER_ID}"
-PRINCIPAL_SET="principalSet://iam.googleapis.com/${POOL_NAME}/attribute.repository/${GITHUB_REPO}"
+PRINCIPAL_SET="principalSet://iam.googleapis.com/${POOL_NAME}/attribute.repository_id/${GITHUB_REPOSITORY_ID}"
 EXPECTED_ISSUER="https://token.actions.githubusercontent.com"
-EXPECTED_CONDITION="assertion.repository == '${GITHUB_REPO}'"
+EXPECTED_CONDITION="assertion.repository_id == '${GITHUB_REPOSITORY_ID}' && assertion.repository_owner_id == '${GITHUB_OWNER_ID}' && assertion.actor_id == '${GITHUB_OWNER_ID}'"
+EXPECTED_ATTRIBUTE_MAPPING="google.subject=assertion.sub,attribute.repository_id=assertion.repository_id,attribute.repository_owner_id=assertion.repository_owner_id,attribute.actor_id=assertion.actor_id,attribute.ref=assertion.ref"
 
 log() { printf '[proofleet-gcp] %s\n' "$*"; }
 
@@ -150,10 +152,11 @@ log "project_number=$PROJECT_NUMBER"
 log "region=$REGION"
 log "cloud_run_service=$CLOUD_RUN_SERVICE"
 log "firestore_collection=$COLLECTION"
-log "github_repo=$GITHUB_REPO"
+log "github_repo_description=$GITHUB_REPO"
+log "github_repository_id=$GITHUB_REPOSITORY_ID"
+log "github_owner_id=$GITHUB_OWNER_ID"
 log "mode=$($APPLY && echo apply || echo dry-run)"
 
-# Provider APIs used by GitHub WIF and the live-proof lane.
 apply_or_plan gcloud services enable \
   iamcredentials.googleapis.com \
   sts.googleapis.com \
@@ -189,13 +192,33 @@ if gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
   ACTUAL_CONDITION="$(gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
     --project="$PROJECT_ID" --location=global --workload-identity-pool="$POOL_ID" \
     --format='value(attributeCondition)')"
+  PROVIDER_JSON="$(mktemp)"
+  trap 'rm -f "$PROVIDER_JSON"' EXIT
+  gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
+    --project="$PROJECT_ID" --location=global --workload-identity-pool="$POOL_ID" \
+    --format=json > "$PROVIDER_JSON"
   if [[ "$ACTUAL_ISSUER" != "$EXPECTED_ISSUER" || "$ACTUAL_CONDITION" != "$EXPECTED_CONDITION" ]]; then
-    echo "Existing WIF provider does not match the required issuer/repository restriction." >&2
+    echo "Existing WIF provider does not match the immutable-ID issuer/repository/actor restriction." >&2
     echo "issuer=$ACTUAL_ISSUER" >&2
     echo "condition=$ACTUAL_CONDITION" >&2
     exit 3
   fi
-  log "WIF provider exists and repository condition matches"
+  python3 - "$PROVIDER_JSON" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    provider = json.load(handle)
+mapping = provider.get('attributeMapping') or {}
+required = {
+    'google.subject': 'assertion.sub',
+    'attribute.repository_id': 'assertion.repository_id',
+    'attribute.repository_owner_id': 'assertion.repository_owner_id',
+    'attribute.actor_id': 'assertion.actor_id',
+    'attribute.ref': 'assertion.ref',
+}
+if any(mapping.get(key) != value for key, value in required.items()):
+    raise SystemExit('Existing WIF provider attribute mapping is missing immutable GitHub identity claims.')
+PY
+  log "WIF provider exists and immutable repository/owner/actor identity contract matches"
 else
   apply_or_plan gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
     --project="$PROJECT_ID" \
@@ -203,18 +226,15 @@ else
     --workload-identity-pool="$POOL_ID" \
     --display-name="ProofFleet repository" \
     --issuer-uri="$EXPECTED_ISSUER" \
-    --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner,attribute.ref=assertion.ref" \
+    --attribute-mapping="$EXPECTED_ATTRIBUTE_MAPPING" \
     --attribute-condition="$EXPECTED_CONDITION"
 fi
 
-# Allow only identities admitted through the exact-repository attribute to
-# impersonate the dedicated service account. No key material is created.
 apply_or_plan gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
   --project="$PROJECT_ID" \
   --role="roles/iam.workloadIdentityUser" \
   --member="$PRINCIPAL_SET"
 
-# Current live-proof lane needs Cloud Run readback and Firestore proof write/readback.
 for role in roles/run.viewer roles/datastore.user; do
   apply_or_plan gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${SA_EMAIL}" \
@@ -222,8 +242,6 @@ for role in roles/run.viewer roles/datastore.user; do
     --condition=None
 done
 
-# These are read-only provider preflights. We intentionally do not create a
-# Firestore database because its location choice should be explicit.
 if gcloud firestore databases describe --database='(default)' --project="$PROJECT_ID" >/dev/null 2>&1; then
   FIRESTORE_LOCATION="$(gcloud firestore databases describe --database='(default)' \
     --project="$PROJECT_ID" --format='value(locationId)')"
@@ -285,5 +303,5 @@ gh variable set PROOFFLEET_FIRESTORE_COLLECTION --repo "$GITHUB_REPO" --body "$C
 EOF
 
 if ! $APPLY; then
-  log "dry-run complete; rerun with --apply only after the project/region/service identities are confirmed"
+  log "dry-run complete; rerun with --apply only after the project/region/service and immutable GitHub identities are confirmed"
 fi
