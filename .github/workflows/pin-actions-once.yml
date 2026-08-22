@@ -1,0 +1,62 @@
+name: ProofFleet One-Shot Action Pinning
+
+on:
+  push:
+    branches:
+      - hardening/fortified-fleet
+    paths:
+      - .github/workflows/pin-actions-once.yml
+      - scripts/pin-github-actions.mjs
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prooffleet-action-pinning-once
+  cancel-in-progress: false
+
+jobs:
+  pin-reviewed-action-commits:
+    if: github.actor_id == '266194342' && github.repository_id == '1339097875'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: hardening/fortified-fleet
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Setup Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Pin reviewed action commits and remove this workflow
+        run: node scripts/pin-github-actions.mjs
+      - name: Refuse unexpected transformer output
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git status --short | awk '{print $2}')"
+          test -n "$changed" || { echo 'Pin transformer produced no changes.' >&2; exit 2; }
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/*.yml|.github/workflows/*.yaml|tests/*.ts|tests/*.tsx) ;;
+              *) echo "Unexpected pin-transformer path: $path" >&2; exit 2 ;;
+            esac
+          done <<< "$changed"
+          test ! -e .github/workflows/pin-actions-once.yml || {
+            echo 'One-shot write workflow failed to remove itself.' >&2
+            exit 2
+          }
+      - name: Commit deterministic pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows tests
+          git diff --cached --check
+          git commit -m 'security: pin privileged GitHub Actions to reviewed SHAs'
+          git push origin HEAD:hardening/fortified-fleet
