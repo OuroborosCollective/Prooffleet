@@ -8,10 +8,14 @@ const workflow = readFileSync(join(here, '../.github/workflows/gcp-live-proof.ym
 const liveProofScript = readFileSync(join(here, '../scripts/gcp-live-proof.ts'), 'utf8');
 
 describe('Live GCP proof workflow safety', () => {
-  it('is manual-only and never runs on push or pull_request', () => {
+  it('accepts only explicit manual consent or the dedicated owner one-shot label and never runs on push', () => {
     expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).toMatch(/^\s*pull_request:/m);
+    expect(workflow).toContain('types:\n      - labeled');
+    expect(workflow).toContain("github.event.label.name == 'proofleet-live-gcp-once'");
+    expect(workflow).toContain("github.actor == 'OuroborosCollective'");
+    expect(workflow).toContain('github.event.pull_request.head.repo.full_name == github.repository');
     expect(workflow).not.toMatch(/^\s*push:/m);
-    expect(workflow).not.toMatch(/^\s*pull_request:/m);
   });
 
   it('uses OIDC/WIF instead of long-lived service-account key JSON', () => {
@@ -31,10 +35,23 @@ describe('Live GCP proof workflow safety', () => {
     expect(workflow).not.toContain('actions/setup-node@v4');
   });
 
-  it('binds source revision and explicit consent before any Firestore proof write', () => {
-    expect(workflow).toContain('PROOFFLEET_SOURCE_REVISION: ${{ github.sha }}');
+  it('checks out and binds the exact source revision plus explicit consent before any Firestore proof write', () => {
+    expect(workflow).toContain("PROOFFLEET_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}");
+    expect(workflow).toContain('ref: ${{ env.PROOFFLEET_SOURCE_REVISION }}');
     expect(workflow).toContain('I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE');
-    expect(workflow).toContain('PROOFFLEET_LIVE_CONFIRMATION: ${{ inputs.confirmation }}');
+    expect(workflow).toContain("PROOFFLEET_LIVE_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || 'I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE' }}");
+    expect(workflow).toContain('ACTUAL_SOURCE_REVISION="$(git rev-parse HEAD)"');
+  });
+
+  it('pins label consent to exact immutable PR authority and rejects foreign repositories', () => {
+    expect(workflow).toContain("PR_LABEL_NAME: ${{ github.event.label.name }}");
+    expect(workflow).toContain("PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}");
+    expect(workflow).toContain("PR_HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id }}");
+    expect(workflow).toContain('test "$EVENT_ACTION" != \'labeled\'');
+    expect(workflow).toContain('test "$PR_LABEL_NAME" != \'proofleet-live-gcp-once\'');
+    expect(workflow).toContain('test "$PR_AUTHOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"');
+    expect(workflow).toContain('test "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY"');
+    expect(workflow).toContain('test "$PR_HEAD_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"');
   });
 
   it('pins mutation authority to immutable repository, owner and actor IDs and blocks GitHub re-runs before WIF authentication', () => {
@@ -78,11 +95,12 @@ describe('Live GCP proof workflow safety', () => {
     expect(liveProofScript).toContain('baseReceipt(plan)');
   });
 
-  it('requires a v3 observed receipt with credential binding and receipt hash', () => {
+  it('requires a v3 observed receipt with credential binding, exact source and receipt hash', () => {
     expect(workflow).toContain("r.schemaVersion !== 'prooffleet.gcp-live-proof.v3'");
     expect(workflow).toContain("r.outcome !== 'OBSERVED'");
     expect(workflow).toContain('executionCredentialBindingHash');
     expect(workflow).toContain('receiptHash');
+    expect(workflow).toContain('r.sourceRevision !== process.env.PROOFFLEET_SOURCE_REVISION');
     expect(workflow).not.toContain("r.schemaVersion!=='prooffleet.gcp-live-proof.v2'");
   });
 });
