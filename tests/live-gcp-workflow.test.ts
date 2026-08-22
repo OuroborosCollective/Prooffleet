@@ -37,6 +37,23 @@ describe('Live GCP proof workflow safety', () => {
     expect(workflow).toContain('PROOFFLEET_LIVE_CONFIRMATION: ${{ inputs.confirmation }}');
   });
 
+  it('pins mutation authority to immutable repository, owner and actor IDs and blocks GitHub re-runs before WIF authentication', () => {
+    expect(workflow).toContain("EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'");
+    expect(workflow).toContain("EXPECTED_GITHUB_REPOSITORY_OWNER_ID: '266194342'");
+    expect(workflow).toContain("EXPECTED_GITHUB_ACTOR_ID: '266194342'");
+    expect(workflow).toContain('test "$PROOFFLEET_GITHUB_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"');
+    expect(workflow).toContain('test "$PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID" != "$EXPECTED_GITHUB_REPOSITORY_OWNER_ID"');
+    expect(workflow).toContain('test "$PROOFFLEET_GITHUB_ACTOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"');
+    expect(workflow).toContain('GitHub actor ID is not authorized for the live-proof mutation.');
+    expect(workflow).toContain('test "$PROOFFLEET_GITHUB_RUN_ATTEMPT" != \'1\'');
+    expect(workflow).toContain('GitHub re-runs are blocked before provider authentication.');
+
+    const rerunGuard = workflow.indexOf('test "$PROOFFLEET_GITHUB_RUN_ATTEMPT" != \'1\'');
+    const providerAuth = workflow.indexOf('- name: Authenticate to Google Cloud with Workload Identity Federation');
+    expect(rerunGuard).toBeGreaterThan(-1);
+    expect(providerAuth).toBeGreaterThan(rerunGuard);
+  });
+
   it('authoritatively reads the active Google principal and project number', () => {
     expect(workflow).toContain("gcloud auth list --filter=status:ACTIVE --format='value(account)'");
     expect(workflow).toContain('gcloud projects describe "$GCP_PROJECT_ID"');
