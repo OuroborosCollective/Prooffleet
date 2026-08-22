@@ -19,41 +19,63 @@ concurrency:
 jobs:
   bootstrap-lockfile:
     name: reconcile-package-lock
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/hardening/')
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/hardening/') &&
+      github.actor_id == '266194342' &&
+      github.repository_id == '1339097875'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - name: Checkout feature branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.ref_name }}
           persist-credentials: true
       - name: Setup Node.js 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
           package-manager-cache: false
+      - name: Apply deterministic reviewed Action pins
+        run: node scripts/pin-github-actions.mjs
       - name: Reconcile package-lock from package.json without running dependency scripts
         shell: bash
         run: |
           set -euo pipefail
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
           test -f package-lock.json
-          if git diff --quiet -- package-lock.json; then
-            echo 'package-lock.json already matches package.json; no mutation required.'
-            exit 0
-          fi
           if ! git diff --quiet -- package.json; then
-            echo 'Refusing lock reconciliation because package.json changed inside the lock job.' >&2
+            echo 'Refusing maintenance commit because package.json changed inside the job.' >&2
             exit 2
           fi
+      - name: Refuse unexpected maintenance output and commit once
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git status --short | awk '{print $2}')"
+          if test -z "$changed"; then
+            echo 'Action pins and package-lock already match; no mutation required.'
+            exit 0
+          fi
+          while IFS= read -r path; do
+            case "$path" in
+              package-lock.json|.github/workflows/*.yml|.github/workflows/*.yaml|tests/*.ts|tests/*.tsx) ;;
+              *) echo "Unexpected maintenance path: $path" >&2; exit 2 ;;
+            esac
+          done <<< "$changed"
+          test ! -e .github/workflows/pin-actions-once.yml || {
+            echo 'One-shot write workflow failed to remove itself.' >&2
+            exit 2
+          }
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package-lock.json
+          git add package-lock.json .github/workflows tests
+          git diff --cached --check
           git diff --cached --quiet && exit 0
-          git commit -m 'chore: reconcile ProofFleet dependency lock'
+          git commit -m 'security: pin privileged GitHub Actions to reviewed SHAs'
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
   verify:
@@ -62,11 +84,11 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout exact revision
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Setup Node.js 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
           cache: npm
@@ -138,7 +160,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload CI evidence identity receipt
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: prooffleet-ci-revision-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci-revision-receipt.json
@@ -151,11 +173,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout exact revision
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Setup Node.js 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
           package-manager-cache: false
