@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { LIVE_GCP_CONFIRMATION, buildLiveGcpProofPlan } from '../server/gcp/liveProof';
 
 const SHA = 'a'.repeat(40);
+const MERGE_SHA = 'b'.repeat(40);
 const PROJECT_NUMBER = '123456789012';
 const WIF_PROVIDER = `projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo`;
 const WIF_SERVICE_ACCOUNT = 'prooffleet-github@prooffleet-test1.iam.gserviceaccount.com';
@@ -47,7 +48,10 @@ describe('Live GCP proof plan', () => {
     });
     expect(plan.operation.parameters).not.toHaveProperty('workflowRunAttempt');
     expect(plan.operation.parameters).not.toHaveProperty('executionIdentityHash');
+    expect(plan.operation.parameters).not.toHaveProperty('workflowContextSha');
     expect(plan.executionIdentity.repositoryOwnerId).toBe('266194342');
+    expect(plan.executionIdentity.sourceRevision).toBe(SHA);
+    expect(plan.executionIdentity.workflowContextSha).toBe(SHA);
     expect(plan.gcpProjectNumber).toBe(PROJECT_NUMBER);
     expect(plan.observedWifPrincipal).toBe(WIF_SERVICE_ACCOUNT);
     expect(plan.operation.targetResource).toBe('firestore:proof-effects');
@@ -65,6 +69,23 @@ describe('Live GCP proof plan', () => {
     expect(first.operation.missionId).toBe(rerun.operation.missionId);
   });
 
+  it('binds a synthetic pull-request merge SHA as workflow context without confusing it with the checked source', () => {
+    const direct = buildLiveGcpProofPlan(env());
+    const pullRequest = buildLiveGcpProofPlan(env({ GITHUB_SHA: MERGE_SHA }));
+
+    expect(pullRequest.sourceRevision).toBe(SHA);
+    expect(pullRequest.executionIdentity.sourceRevision).toBe(SHA);
+    expect(pullRequest.executionIdentity.workflowContextSha).toBe(MERGE_SHA);
+    expect(pullRequest.executionIdentity.identityHash).not.toBe(direct.executionIdentity.identityHash);
+    expect(pullRequest.operation.operationId).toBe(direct.operation.operationId);
+    expect(pullRequest.operation.parametersHash).toBe(direct.operation.parametersHash);
+  });
+
+  it('rejects malformed workflow context instead of dropping it from execution evidence', () => {
+    expect(() => buildLiveGcpProofPlan(env({ GITHUB_SHA: 'merge-ref' })))
+      .toThrow(/exact lowercase 40-character Git SHA/);
+  });
+
   it('changes operation identity when immutable owner or actor authority changes', () => {
     const first = buildLiveGcpProofPlan(env());
     const ownerChanged = buildLiveGcpProofPlan(env({ GITHUB_REPOSITORY_OWNER_ID: '266194343' }));
@@ -77,11 +98,6 @@ describe('Live GCP proof plan', () => {
     expect(buildLiveGcpProofPlan(env()).mutationApproved).toBe(false);
     expect(buildLiveGcpProofPlan(env({ PROOFFLEET_LIVE_CONFIRMATION: 'close enough' })).mutationApproved).toBe(false);
     expect(buildLiveGcpProofPlan(env({ PROOFFLEET_LIVE_CONFIRMATION: LIVE_GCP_CONFIRMATION })).mutationApproved).toBe(true);
-  });
-
-  it('fails closed when workflow SHA and declared source revision diverge', () => {
-    expect(() => buildLiveGcpProofPlan(env({ GITHUB_SHA: 'b'.repeat(40) })))
-      .toThrow('does not match expected source revision');
   });
 
   it('does not use mutable actor display names or workflow paths as operation evidence', () => {
