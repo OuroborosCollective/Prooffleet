@@ -65,7 +65,7 @@ describe('GitHub Actions supply-chain pinning', () => {
         if (!match) continue;
         const reference = match[1];
         if (reference.startsWith('./') || reference.startsWith('docker://')) continue;
-        if (!/@[0-9a-f]{40}$/.test(reference)) violations.push(\\`${'${workflow.name}'}: ${'${reference}'}\\`);
+        if (!/@[0-9a-f]{40}$/.test(reference)) violations.push(workflow.name + ': ' + reference);
       }
     }
     expect(violations, violations.join('\\n')).toEqual([]);
