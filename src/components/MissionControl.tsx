@@ -13,12 +13,14 @@ interface MissionControlProps {
   }) => void;
   isRunning: boolean;
   onResetChain: () => void;
+  canResetChain: boolean;
 }
 
 export const MissionControl: React.FC<MissionControlProps> = ({
   onRunMission,
   isRunning,
   onResetChain,
+  canResetChain,
 }) => {
   const [selectedPreset, setSelectedPreset] = useState<Mission["presetKey"]>("security_audit");
   const [customGoal, setCustomGoal] = useState<string>(
@@ -95,9 +97,9 @@ export const MissionControl: React.FC<MissionControlProps> = ({
         <button
           type="button"
           onClick={onResetChain}
-          disabled={isRunning}
-          className="self-start sm:self-auto flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
-          title="Reset Evidence Chain to Genesis Block"
+          disabled={isRunning || !canResetChain}
+          className="self-start sm:self-auto flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          title={canResetChain ? "Reset Evidence Chain to Genesis Block" : "Authenticated operator session required to reset evidence"}
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Reset Ledger</span>

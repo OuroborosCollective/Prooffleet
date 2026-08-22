@@ -92,16 +92,16 @@ export const EvidenceChainLedger: React.FC<EvidenceChainLedgerProps> = ({
       {/* Block List */}
       <div className="flex-1 overflow-y-auto space-y-3 pr-1 max-h-[480px]">
         {chain.map((block) => {
-          const isExpanded = expandedBlockId === block.id;
+          const isExpanded = expandedBlockId === block.blockHash;
 
           return (
             <div
-              key={block.id}
+              key={block.blockHash}
               className="border border-slate-200 rounded-xl bg-slate-50/40 hover:bg-white transition-all overflow-hidden"
             >
               {/* Block Header */}
               <div
-                onClick={() => toggleExpand(block.id)}
+                onClick={() => toggleExpand(block.blockHash)}
                 className="p-3 cursor-pointer flex items-center justify-between gap-2"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -113,14 +113,14 @@ export const EvidenceChainLedger: React.FC<EvidenceChainLedgerProps> = ({
                       {block.claim}
                     </p>
                     <p className="text-[10px] font-mono text-slate-400 truncate">
-                      Agent: {block.agentId.toUpperCase()} • Type: {block.evidenceType}
+                      Agent: {block.agentId.toUpperCase()} • Sealed: {new Date(block.sealedAt).toLocaleTimeString()}
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    {block.truthScore}% Truth
+                    Sealed
                   </span>
                   {isExpanded ? (
                     <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -138,7 +138,7 @@ export const EvidenceChainLedger: React.FC<EvidenceChainLedgerProps> = ({
                       Current SHA-256 Digest
                     </label>
                     <div className="p-2 rounded bg-slate-900 text-emerald-400 font-mono text-[11px] break-all select-all">
-                      {block.hash}
+                      {block.blockHash}
                     </div>
                   </div>
 
@@ -154,10 +154,10 @@ export const EvidenceChainLedger: React.FC<EvidenceChainLedgerProps> = ({
 
                   <div>
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-0.5">
-                      HMAC Signature (secp256 Agent Key)
+                      HMAC Signature (env secret; null when not configured)
                     </label>
                     <div className="p-1.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] break-all select-all">
-                      {block.signature}
+                      {block.signature ?? "unsigned (no PROOFFLEET_HMAC_SECRET configured)"}
                     </div>
                   </div>
 
@@ -166,7 +166,7 @@ export const EvidenceChainLedger: React.FC<EvidenceChainLedgerProps> = ({
                       Audited Data Payload
                     </label>
                     <pre className="p-2 rounded bg-slate-50 border border-slate-200 text-[10px] text-slate-700 font-mono overflow-x-auto">
-                      {JSON.stringify(block.dataPayload, null, 2)}
+                      {JSON.stringify(block.payload, null, 2)}
                     </pre>
                   </div>
                 </div>

@@ -1,0 +1,200 @@
+name: ProofFleet CI
+
+on:
+  push:
+    branches:
+      - main
+      - hardening/**
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prooffleet-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap-lockfile:
+    name: reconcile-package-lock
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/hardening/') &&
+      github.actor_id == '266194342' &&
+      github.repository_id == '1339097875'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: true
+      - name: Setup Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Apply deterministic reviewed Action pins
+        run: node scripts/pin-github-actions.mjs
+      - name: Reconcile package-lock from package.json without running dependency scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          test -f package-lock.json
+          if ! git diff --quiet -- package.json; then
+            echo 'Refusing maintenance commit because package.json changed inside the job.' >&2
+            exit 2
+          fi
+      - name: Refuse unexpected maintenance output and commit once
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git status --short | awk '{print $2}')"
+          if test -z "$changed"; then
+            echo 'Action pins and package-lock already match; no mutation required.'
+            exit 0
+          fi
+          while IFS= read -r path; do
+            case "$path" in
+              package-lock.json|.github/workflows/*.yml|.github/workflows/*.yaml|tests/*.ts|tests/*.tsx) ;;
+              *) echo "Unexpected maintenance path: $path" >&2; exit 2 ;;
+            esac
+          done <<< "$changed"
+          test ! -e .github/workflows/pin-actions-once.yml || {
+            echo 'One-shot write workflow failed to remove itself.' >&2
+            exit 2
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json .github/workflows tests
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m 'security: pin privileged GitHub Actions to reviewed SHAs'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+  verify:
+    name: verify-runtime-chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package.json
+      - name: Install dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f package-lock.json; then
+            echo 'Using immutable package-lock via npm ci.'
+            npm ci --no-audit --no-fund
+          else
+            echo 'WARNING: package-lock missing on this revision; resolving candidate graph.'
+            npm install --no-audit --no-fund
+          fi
+      - name: Verify TypeScript, regressions, production build and HTTP runtime
+        run: npm run verify:ci
+      - name: Build and smoke exact Cloud Run container image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="prooffleet-ci:${GITHUB_SHA}"
+          NAME="prooffleet-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker build --tag "$IMAGE" .
+          IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          if ! printf '%s' "$IMAGE_ID" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Docker did not return an immutable image ID: $IMAGE_ID" >&2
+            exit 2
+          fi
+          docker run --detach --name "$NAME" --env PORT=8080 --publish 127.0.0.1:3188:8080 "$IMAGE" >/dev/null
+          cleanup() {
+            docker logs "$NAME" || true
+            docker rm --force "$NAME" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          ready=false
+          for _ in $(seq 1 40); do
+            if curl --fail --silent --show-error http://127.0.0.1:3188/api/health >/tmp/prooffleet-container-health.json; then
+              ready=true
+              break
+            fi
+            sleep 0.25
+          done
+          if test "$ready" != true; then
+            echo 'Cloud Run container never became healthy on PORT=8080.' >&2
+            exit 1
+          fi
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/prooffleet-container-health.json','utf8'));if(!j||typeof j!=='object'||Array.isArray(j))process.exit(2);console.log('[container-smoke] health readback received')"
+          HEALTH_SHA="sha256:$(sha256sum /tmp/prooffleet-container-health.json | awk '{print $1}')"
+          printf 'CI_CONTAINER_IMAGE_ID=%s\n' "$IMAGE_ID" >> "$GITHUB_ENV"
+          printf 'CI_HEALTH_READBACK_SHA256=%s\n' "$HEALTH_SHA" >> "$GITHUB_ENV"
+          echo "[container-smoke] immutable_image_id=$IMAGE_ID"
+          echo "[container-smoke] health_readback_sha256=$HEALTH_SHA"
+          echo '[container-smoke] exact Docker image passed HTTP runtime smoke on PORT=8080'
+      - name: Record source, run, runner, artifact and readback identities
+        shell: bash
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CI_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/ci-revision-receipt.mjs > ci-revision-receipt.json
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('ci-revision-receipt.json','utf8'));if(r.schemaVersion!=='prooffleet.ci-revision-receipt.v2'||!/^sha256:[0-9a-f]{64}$/.test(r.evidenceIdentitySha256))process.exit(2);console.log('[ci-receipt] v2 evidence identity bound',r.evidenceIdentitySha256)"
+          {
+            echo '### ProofFleet CI revision receipt v2'
+            echo '```json'
+            cat ci-revision-receipt.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload CI evidence identity receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prooffleet-ci-revision-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-revision-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+  dependency-audit:
+    name: dependency-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Ensure audit lock exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! test -f package-lock.json; then
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          fi
+      - name: High/Critical vulnerability gate
+        run: npm audit --audit-level=high
+
+# Evidence identity contract:
+# - Mutable display descriptors (workflow names/paths, labels, actor names) are context only.
+# - Authoritative CI evidence binds exact source/tested revisions, GitHub run ID/attempt,
+#   numeric repository/owner/actor IDs, runner environment/OS/arch, immutable Docker image ID,
+#   and the SHA-256 of the observed runtime health response.
+# - The receipt itself is uploaded as a run-scoped artifact and carries a hash over those fields.
+# - Pull-request verification keeps source head distinct from GitHub's tested synthetic merge.

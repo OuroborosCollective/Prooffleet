@@ -33,7 +33,7 @@ export const TruthVerificationReport: React.FC<TruthVerificationReportProps> = (
 **Timestamp:** ${mission.finishedAt}
 
 ## Truth & Cryptographic Integrity Verdict
-- **Empirical Truth Score:** ${finalVerdict.overallTruthScore}%
+- **Judge Verdict:** ${finalVerdict.judgeVerdict.verdict} — ${finalVerdict.judgeVerdict.rationale}
 - **Cryptographic Chain Integrity:** ${finalVerdict.integrityVerified ? "VERIFIED (100% Intact)" : "FAILED"}
 - **Zero-Trust Policy Compliance:** ${finalVerdict.compliancePassed ? "PASSED" : "FAILED"}
 - **Final SHA-256 Digest:** \`${finalVerdict.chainHashDigest}\`
@@ -91,14 +91,16 @@ ${finalVerdict.recommendations.map((r) => `- ${r}`).join("\n")}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div className="p-3 rounded-xl bg-emerald-50/50 border border-emerald-200">
           <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">
-            Overall Truth Score
+            Judge Verdict
           </span>
           <div className="flex items-baseline gap-1 mt-1">
-            <span className="text-2xl font-black text-emerald-900">
-              {finalVerdict.overallTruthScore}%
+            <span className="text-lg font-black text-emerald-900">
+              {finalVerdict.judgeVerdict.verdict}
             </span>
-            <span className="text-xs font-medium text-emerald-600">Confidence</span>
           </div>
+          <p className="text-[10px] text-emerald-700 mt-1 leading-snug">
+            {finalVerdict.judgeVerdict.rationale}
+          </p>
         </div>
 
         <div className="p-3 rounded-xl bg-blue-50/50 border border-blue-200">
@@ -107,7 +109,7 @@ ${finalVerdict.recommendations.map((r) => `- ${r}`).join("\n")}
           </span>
           <div className="flex items-center gap-1.5 mt-1.5 text-blue-900 font-bold text-sm">
             <ShieldCheck className="w-4 h-4 text-blue-600" />
-            <span>100% Intact (SHA-256)</span>
+            <span>{finalVerdict.integrityVerified ? "Intact (SHA-256)" : "FAILED"}</span>
           </div>
         </div>
 
@@ -117,7 +119,7 @@ ${finalVerdict.recommendations.map((r) => `- ${r}`).join("\n")}
           </span>
           <div className="flex items-center gap-1.5 mt-1.5 text-slate-900 font-bold text-sm">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Zero Violations</span>
+            <span>{finalVerdict.compliancePassed ? "No Violations Detected" : "Violations Detected"}</span>
           </div>
         </div>
       </div>
@@ -150,7 +152,7 @@ ${finalVerdict.recommendations.map((r) => `- ${r}`).join("\n")}
             Final Hash: {finalVerdict.chainHashDigest}
           </span>
           <span className="shrink-0 font-semibold text-emerald-600">
-            Cryptographically Signed
+            Cryptographically Sealed (SHA-256)
           </span>
         </div>
       </div>

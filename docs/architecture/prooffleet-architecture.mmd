@@ -1,0 +1,83 @@
+flowchart LR
+  %% ProofFleet architecture — current hardening + live-evidence contract
+
+  subgraph CLIENT[Human + Web UI]
+    H[Human Operator]
+    UI[React + TypeScript UI]
+    H --> UI
+  end
+
+  subgraph RUNTIME[ProofFleet Express Runtime]
+    API[Express API + FleetRunner]
+
+    subgraph AGENTS[8 Core Roles]
+      O[1 Orchestrator\nGoogle ADK + Gemini 3.7 Flash]
+      S[2 Scout\nGoogle ADK + Gemini 3.7 Flash\nUNGROUNDED unless real source tool]
+      B[3 Builder\ndeterministic-runtime]
+      A[4 Analyst\ndeterministic-runtime]
+      SE[5 Sentinel\ndeterministic-runtime]
+      AU[6 Auditor\ndeterministic-runtime]
+      G[7 Gatekeeper\ndeterministic-runtime]
+      OP[8 Operator\ndeterministic-runtime]
+      O --> S --> B --> A --> SE --> AU --> G
+    end
+
+    C{Explicit operation-bound\nhuman consent}
+    G --> C
+    C -->|APPROVED| OP
+    C -->|REJECTED| J
+
+    EX[OperationExecutor\nIdempotency + readback-before-retry]
+    OP --> EX
+
+    MEM[(Memory Store\ncontext only — never truth)]
+    O -. advisory .-> MEM
+    S -. advisory .-> MEM
+
+    EV[(Evidence Ledger +\nSHA-256 Receipt Chain)]
+    V[Independent Verifier\nread-only snapshots]
+    J[Non-mutating Judge]
+    EV --> V --> J
+
+    J --> V1[VERIFIED]
+    J --> V2[BLOCKED_BY_MISSING_EVIDENCE]
+    J --> V3[CONTRADICTED]
+  end
+
+  UI --> API
+  API --> O
+
+  subgraph GOOGLEAI[Google AI]
+    ADK[Google ADK\nGemini 3.7 Flash]
+  end
+  ADK -->|AGENT_OUTPUT + model ID + output hash| O
+  ADK -->|context only; no fake citations| S
+
+  O --> EV
+  S --> EV
+  B --> EV
+  A --> EV
+  SE --> EV
+  AU --> EV
+  G --> EV
+  OP --> EV
+
+  subgraph GCP[Google Cloud provider boundaries]
+    WIF[GitHub OIDC / Workload Identity Federation]
+    OCI[Artifact Registry\nOCI index → linux/amd64 manifest]
+    CR[Cloud Run candidate\nauthoritative revision readback]
+    FS[(Firestore\noperation-bound effect + readback)]
+    WIF --> OCI
+    WIF --> CR
+    WIF --> FS
+    OCI -->|registry-proven runtime digest| CR
+  end
+
+  EX -->|only after explicit consent| FS
+  FS -->|FIRESTORE_READBACK| EV
+  CR -->|CLOUD_RUN_READBACK + declared source SHA| EV
+
+  LIVE[Cloud Run candidate receipt\nOBSERVED · 0% normal traffic]
+  PENDING[Remaining provider boundary\nADK live canary NOT_RUN\nFirestore live effect not OBSERVED]
+  CR --> LIVE
+  WIF -. fail-closed .-> PENDING
