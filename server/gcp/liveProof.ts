@@ -82,6 +82,8 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
     proofKind: 'live_firestore_effect',
     sourceRevision,
     repositoryId: executionIdentity.repositoryId,
+    repositoryOwnerId: executionIdentity.repositoryOwnerId,
+    actorId: executionIdentity.actorId,
     workflowRunId: executionIdentity.workflowRunId,
     workflowRunAttempt: executionIdentity.workflowRunAttempt,
     executionIdentityHash: executionIdentity.identityHash,
