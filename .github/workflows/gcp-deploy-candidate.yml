@@ -117,6 +117,10 @@ jobs:
             echo 'GitHub actor ID does not match the approved operator.' >&2
             exit 2
           fi
+          if test "$GITHUB_RUN_ATTEMPT" != '1'; then
+            echo 'Candidate deployment requires a fresh explicit trigger; GitHub re-runs are blocked before WIF authentication.' >&2
+            exit 2
+          fi
 
           if test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'; then
             if test "$EXPECTED_SOURCE_REVISION" != "$GITHUB_SHA"; then
