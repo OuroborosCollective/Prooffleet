@@ -33,13 +33,15 @@ function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 describe('Live GCP proof plan', () => {
-  it('binds operation identity to exact source, repository, run attempt and authenticated GCP identity', () => {
+  it('binds operation identity to exact source, repository, owner, actor, run attempt and authenticated GCP identity', () => {
     const first = buildLiveGcpProofPlan(env());
     const second = buildLiveGcpProofPlan(env({ GITHUB_RUN_ATTEMPT: '2' }));
 
     expect(first.operation.parameters).toMatchObject({
       sourceRevision: SHA,
       repositoryId: '1339097875',
+      repositoryOwnerId: '266194342',
+      actorId: '266194342',
       workflowRunId: '12345',
       workflowRunAttempt: '1',
       executionIdentityHash: first.executionIdentity.identityHash,
@@ -51,6 +53,14 @@ describe('Live GCP proof plan', () => {
     expect(first.observedWifPrincipal).toBe(WIF_SERVICE_ACCOUNT);
     expect(first.operation.operationId).not.toBe(second.operation.operationId);
     expect(first.operation.targetResource).toBe('firestore:proof-effects');
+  });
+
+  it('changes operation identity when immutable owner or actor authority changes', () => {
+    const first = buildLiveGcpProofPlan(env());
+    const ownerChanged = buildLiveGcpProofPlan(env({ GITHUB_REPOSITORY_OWNER_ID: '266194343' }));
+    const actorChanged = buildLiveGcpProofPlan(env({ GITHUB_ACTOR_ID: '266194343' }));
+    expect(first.operation.operationId).not.toBe(ownerChanged.operation.operationId);
+    expect(first.operation.operationId).not.toBe(actorChanged.operation.operationId);
   });
 
   it('does not authorize a mutation without the exact workflow-dispatch phrase', () => {
