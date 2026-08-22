@@ -11,6 +11,11 @@ import {
 import { createGcpAdapters } from "./server/adapters/gcp/index";
 import type { ConsentGrant } from "./src/types/index";
 import { OperatorSessionManager } from "./server/security/operatorSession";
+import {
+  ADK_WIF_CANARY_INTENT,
+  GoogleWifCanaryAuthError,
+  verifyGoogleWifCanaryAuthority,
+} from "./server/security/googleWifCanaryAuth";
 import { resolveRuntimePort } from "./server/runtimePort";
 import { AdkRuntimeCanaryController } from "./server/adkCanaryController";
 
@@ -81,6 +86,53 @@ async function startServer() {
     }
 
     res.json({ success: true, canary });
+  });
+
+  // Release-only ADK canary bridge. It accepts no operator credential and has
+  // no mission, consent, Firestore, Judge or traffic authority. A caller must
+  // present a Google-signed ID token for this exact tagged Cloud Run audience,
+  // issued to the already-provisioned ProofFleet deploy WIF service account,
+  // plus an exact source-bound release intent. The shared process-local canary
+  // controller still guarantees one terminal model attempt per source runtime.
+  app.post("/api/runtime/adk-canary/wif", async (req, res) => {
+    if (req.get("x-prooffleet-canary-intent") !== ADK_WIF_CANARY_INTENT) {
+      return res.status(403).json({ error: "wif canary intent required" });
+    }
+
+    const before = adkCanary.snapshot();
+    if (!before.eligible || !before.sourceRevision) {
+      return res.status(409).json({
+        error: "adk canary requires an exact runtime source revision",
+        canary: before,
+      });
+    }
+
+    let authority;
+    try {
+      authority = await verifyGoogleWifCanaryAuthority({
+        authorization: req.get("authorization"),
+        host: req.get("host"),
+        requestSourceRevision: req.get("x-prooffleet-source-revision"),
+        runtimeSourceRevision: before.sourceRevision,
+      });
+    } catch (error) {
+      const code = error instanceof GoogleWifCanaryAuthError
+        ? error.code
+        : "wif_canary_token_invalid";
+      const status = code === "wif_canary_source_mismatch" ? 409 : 401;
+      return res.status(status).json({ error: code });
+    }
+
+    const canary = await adkCanary.trigger();
+    if (canary.status === "FAILED") {
+      return res.status(502).json({
+        error: canary.failureReason ?? "adk_canary_provider_error",
+        canary,
+        authority,
+      });
+    }
+
+    res.json({ success: true, canary, authority });
   });
 
   // Get Fleet Agents
