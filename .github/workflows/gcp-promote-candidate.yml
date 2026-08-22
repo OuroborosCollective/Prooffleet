@@ -42,18 +42,24 @@ jobs:
     timeout-minutes: 15
 
     env:
-      GCP_PROJECT_ID: ${{ vars.PROOFFLEET_GCP_PROJECT_ID }}
-      GCP_REGION: ${{ vars.PROOFFLEET_GCP_REGION }}
-      GCP_WIF_PROVIDER: ${{ vars.PROOFFLEET_GCP_WIF_PROVIDER }}
-      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.PROOFFLEET_GCP_DEPLOY_SERVICE_ACCOUNT }}
-      PROOFFLEET_CLOUDRUN_SERVICE: ${{ vars.PROOFFLEET_CLOUDRUN_SERVICE }}
-      PROOFFLEET_ARTIFACT_REPOSITORY: ${{ vars.PROOFFLEET_ARTIFACT_REPOSITORY }}
+      GCP_PROJECT_ID: project-b29d4703-a302-4b05-b2e
+      GCP_REGION: europe-west1
+      GCP_WIF_PROVIDER: projects/511695074775/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo
+      GCP_DEPLOY_SERVICE_ACCOUNT: prooffleet-deploy@project-b29d4703-a302-4b05-b2e.iam.gserviceaccount.com
+      PROOFFLEET_CLOUDRUN_SERVICE: prooffleet
+      PROOFFLEET_ARTIFACT_REPOSITORY: prooffleet
+      EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'
+      EXPECTED_GITHUB_REPOSITORY_OWNER_ID: '266194342'
+      EXPECTED_GITHUB_ACTOR_ID: '266194342'
       EXPECTED_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.expected_source_revision }}
       PROMOTION_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
+      EVENT_ACTION: ${{ github.event.action }}
       EVENT_ACTOR: ${{ github.actor }}
       PR_LABEL_NAME: ${{ github.event.label.name }}
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
       PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      PR_HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id }}
 
     steps:
       - name: Checkout exact source revision
@@ -75,6 +81,14 @@ jobs:
             PROOFFLEET_CLOUDRUN_SERVICE
             PROOFFLEET_ARTIFACT_REPOSITORY
             EXPECTED_SOURCE_REVISION
+            EXPECTED_GITHUB_REPOSITORY_ID
+            EXPECTED_GITHUB_REPOSITORY_OWNER_ID
+            EXPECTED_GITHUB_ACTOR_ID
+            GITHUB_REPOSITORY_ID
+            GITHUB_REPOSITORY_OWNER_ID
+            GITHUB_ACTOR_ID
+            GITHUB_RUN_ID
+            GITHUB_RUN_ATTEMPT
           )
           for key in "${required[@]}"; do
             if test -z "${!key:-}"; then
@@ -94,6 +108,31 @@ jobs:
             exit 2
           fi
 
+          for key in \
+            EXPECTED_GITHUB_REPOSITORY_ID EXPECTED_GITHUB_REPOSITORY_OWNER_ID EXPECTED_GITHUB_ACTOR_ID \
+            GITHUB_REPOSITORY_ID GITHUB_REPOSITORY_OWNER_ID GITHUB_ACTOR_ID GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; do
+            if ! printf '%s' "${!key}" | grep -Eq '^[1-9][0-9]*$'; then
+              echo "Immutable GitHub identity ${key} is malformed." >&2
+              exit 2
+            fi
+          done
+          if test "$GITHUB_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+            echo 'GitHub repository ID does not match the approved promotion repository.' >&2
+            exit 2
+          fi
+          if test "$GITHUB_REPOSITORY_OWNER_ID" != "$EXPECTED_GITHUB_REPOSITORY_OWNER_ID"; then
+            echo 'GitHub repository owner ID does not match the approved promotion owner.' >&2
+            exit 2
+          fi
+          if test "$GITHUB_ACTOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+            echo 'GitHub actor ID is not authorized for candidate promotion.' >&2
+            exit 2
+          fi
+          if test "$GITHUB_RUN_ATTEMPT" != '1'; then
+            echo 'Candidate promotion requires a fresh explicit trigger; GitHub re-runs are blocked before WIF authentication.' >&2
+            exit 2
+          fi
+
           if test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'; then
             if test "$EXPECTED_SOURCE_REVISION" != "$GITHUB_SHA"; then
               echo "Refusing stale manual promotion: expected_source_revision=$EXPECTED_SOURCE_REVISION github.sha=$GITHUB_SHA" >&2
@@ -104,8 +143,14 @@ jobs:
               exit 2
             fi
           elif test "$GITHUB_EVENT_NAME" = 'pull_request'; then
-            if test "$GITHUB_EVENT_ACTION" != 'labeled'; then
-              echo "Candidate promotion only accepts pull_request:labeled, got action=$GITHUB_EVENT_ACTION" >&2
+            for key in EVENT_ACTION EVENT_ACTOR PR_LABEL_NAME PR_AUTHOR PR_AUTHOR_ID PR_HEAD_REPOSITORY PR_HEAD_REPOSITORY_ID; do
+              if test -z "${!key:-}"; then
+                echo "Missing pull-request promotion authority value: ${key}" >&2
+                exit 2
+              fi
+            done
+            if test "$EVENT_ACTION" != 'labeled'; then
+              echo "Candidate promotion only accepts pull_request:labeled, got action=$EVENT_ACTION" >&2
               exit 2
             fi
             if test "$PR_LABEL_NAME" != 'proofleet-promote-candidate'; then
@@ -116,8 +161,12 @@ jobs:
               echo 'Pre-merge candidate promotion requires owner actor and owner-authored PR.' >&2
               exit 2
             fi
-            if test "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY"; then
-              echo "Refusing candidate promotion from foreign repository: $PR_HEAD_REPOSITORY" >&2
+            if test "$PR_AUTHOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+              echo 'Pull-request author ID does not match the approved promotion operator.' >&2
+              exit 2
+            fi
+            if test "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" || test "$PR_HEAD_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+              echo 'Refusing candidate promotion from a foreign or mismatched repository.' >&2
               exit 2
             fi
           else
@@ -125,7 +174,7 @@ jobs:
             exit 2
           fi
 
-          if ! printf '%s' "$GCP_WIF_PROVIDER" | grep -Eq '^projects/[0-9]+/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'; then
+          if ! printf '%s' "$GCP_WIF_PROVIDER" | grep -Eq '^projects/[1-9][0-9]*/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'; then
             echo 'GCP_WIF_PROVIDER is malformed.' >&2
             exit 2
           fi
@@ -202,6 +251,12 @@ jobs:
             region: process.env.GCP_REGION,
             service: process.env.PROOFFLEET_CLOUDRUN_SERVICE,
             sourceRevision: process.env.EXPECTED_SOURCE_REVISION,
+            workflowContextSha: process.env.GITHUB_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            repositoryId: process.env.GITHUB_REPOSITORY_ID,
+            repositoryOwnerId: process.env.GITHUB_REPOSITORY_OWNER_ID,
+            actorId: process.env.GITHUB_ACTOR_ID,
             candidateTag,
             revisionName,
             candidateUrl,
