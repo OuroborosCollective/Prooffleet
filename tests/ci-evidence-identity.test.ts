@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workflow = readFileSync(join(here, '../.github/workflows/ci.yml'), 'utf8');
+const UPLOAD_ARTIFACT_PIN = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02';
 
 describe('CI evidence identity workflow contract', () => {
   it('binds runtime artifact and readback bytes before writing the receipt', () => {
@@ -15,8 +16,9 @@ describe('CI evidence identity workflow contract', () => {
     expect(workflow).toContain('CI_HEALTH_READBACK_SHA256');
   });
 
-  it('uploads the receipt as a run-and-attempt-scoped artifact', () => {
-    expect(workflow).toContain('actions/upload-artifact@v4');
+  it('uploads the receipt as a run-and-attempt-scoped artifact using the reviewed action pin', () => {
+    expect(workflow).toContain(UPLOAD_ARTIFACT_PIN);
+    expect(workflow).not.toMatch(/actions\/upload-artifact@v\d+\b/);
     expect(workflow).toContain('prooffleet-ci-revision-receipt-${{ github.run_id }}-${{ github.run_attempt }}');
     expect(workflow).toContain('ci-revision-receipt.json');
   });
