@@ -19,6 +19,7 @@ function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     PROOFFLEET_SOURCE_REVISION: SHA,
     GITHUB_SHA: SHA,
     GITHUB_REPOSITORY_ID: '1339097875',
+    GITHUB_REPOSITORY_OWNER_ID: '266194342',
     GITHUB_ACTOR_ID: '266194342',
     GITHUB_RUN_ID: '12345',
     GITHUB_RUN_ATTEMPT: '1',
@@ -45,6 +46,7 @@ describe('Live GCP proof plan', () => {
       gcpProjectNumber: PROJECT_NUMBER,
       observedWifPrincipal: WIF_SERVICE_ACCOUNT,
     });
+    expect(first.executionIdentity.repositoryOwnerId).toBe('266194342');
     expect(first.gcpProjectNumber).toBe(PROJECT_NUMBER);
     expect(first.observedWifPrincipal).toBe(WIF_SERVICE_ACCOUNT);
     expect(first.operation.operationId).not.toBe(second.operation.operationId);
@@ -99,5 +101,6 @@ describe('Live GCP proof plan', () => {
     expect(() => buildLiveGcpProofPlan(env({ GITHUB_RUN_ID: 'run-1' }))).toThrow(/positive decimal identifier/);
     expect(() => buildLiveGcpProofPlan(env({ GITHUB_ACTOR_ID: 'owner-name' }))).toThrow(/positive decimal identifier/);
     expect(() => buildLiveGcpProofPlan(env({ GITHUB_REPOSITORY_ID: '0' }))).toThrow(/positive decimal identifier/);
+    expect(() => buildLiveGcpProofPlan(env({ GITHUB_REPOSITORY_OWNER_ID: '0' }))).toThrow(/positive decimal identifier/);
   });
 });
