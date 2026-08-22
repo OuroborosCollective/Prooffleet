@@ -28,6 +28,9 @@ jobs:
       GCP_WIF_SERVICE_ACCOUNT: ${{ vars.PROOFFLEET_GCP_WIF_SERVICE_ACCOUNT }}
       PROOFFLEET_CLOUDRUN_SERVICE: ${{ vars.PROOFFLEET_CLOUDRUN_SERVICE }}
       PROOFFLEET_FIRESTORE_COLLECTION: ${{ vars.PROOFFLEET_FIRESTORE_COLLECTION }}
+      EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'
+      EXPECTED_GITHUB_REPOSITORY_OWNER_ID: '266194342'
+      EXPECTED_GITHUB_ACTOR_ID: '266194342'
       PROOFFLEET_SOURCE_REVISION: ${{ github.sha }}
       PROOFFLEET_LIVE_CONFIRMATION: ${{ inputs.confirmation }}
       PROOFFLEET_GITHUB_RUN_ID: ${{ github.run_id }}
@@ -42,7 +45,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Fail closed on missing live-proof configuration
+      - name: Fail closed on missing live-proof configuration or authority replay
         shell: bash
         run: |
           set -euo pipefail
@@ -53,6 +56,9 @@ jobs:
             GCP_WIF_SERVICE_ACCOUNT
             PROOFFLEET_CLOUDRUN_SERVICE
             PROOFFLEET_FIRESTORE_COLLECTION
+            EXPECTED_GITHUB_REPOSITORY_ID
+            EXPECTED_GITHUB_REPOSITORY_OWNER_ID
+            EXPECTED_GITHUB_ACTOR_ID
             PROOFFLEET_GITHUB_RUN_ID
             PROOFFLEET_GITHUB_RUN_ATTEMPT
             PROOFFLEET_GITHUB_REPOSITORY_ID
@@ -77,12 +83,31 @@ jobs:
             echo 'GCP_WIF_SERVICE_ACCOUNT is malformed.' >&2
             exit 2
           fi
-          for key in PROOFFLEET_GITHUB_RUN_ID PROOFFLEET_GITHUB_RUN_ATTEMPT PROOFFLEET_GITHUB_REPOSITORY_ID PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID PROOFFLEET_GITHUB_ACTOR_ID; do
+          for key in \
+            EXPECTED_GITHUB_REPOSITORY_ID EXPECTED_GITHUB_REPOSITORY_OWNER_ID EXPECTED_GITHUB_ACTOR_ID \
+            PROOFFLEET_GITHUB_RUN_ID PROOFFLEET_GITHUB_RUN_ATTEMPT PROOFFLEET_GITHUB_REPOSITORY_ID \
+            PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID PROOFFLEET_GITHUB_ACTOR_ID; do
             if ! printf '%s' "${!key}" | grep -Eq '^[1-9][0-9]*$'; then
               echo "Immutable GitHub identity ${key} is malformed." >&2
               exit 2
             fi
           done
+          if test "$PROOFFLEET_GITHUB_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+            echo 'GitHub repository ID does not match the approved live-proof repository.' >&2
+            exit 2
+          fi
+          if test "$PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID" != "$EXPECTED_GITHUB_REPOSITORY_OWNER_ID"; then
+            echo 'GitHub repository owner ID does not match the approved live-proof owner.' >&2
+            exit 2
+          fi
+          if test "$PROOFFLEET_GITHUB_ACTOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+            echo 'GitHub actor ID is not authorized for the live-proof mutation.' >&2
+            exit 2
+          fi
+          if test "$PROOFFLEET_GITHUB_RUN_ATTEMPT" != '1'; then
+            echo 'Live-proof mutation requires a fresh workflow_dispatch; GitHub re-runs are blocked before provider authentication.' >&2
+            exit 2
+          fi
           test "$PROOFFLEET_SOURCE_REVISION" = "$GITHUB_SHA"
 
       - name: Authenticate to Google Cloud with Workload Identity Federation
