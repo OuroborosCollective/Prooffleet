@@ -9,7 +9,7 @@ export function normalizeExactGitRevision(value: unknown): string | null {
 export function requireExactGitRevision(value: unknown): string {
   const revision = normalizeExactGitRevision(value);
   if (!revision) {
-    throw new Error('exact lowercase 40-character Git source revision required');
+    throw new Error('exact lowercase 40-character Git SHA source revision required');
   }
   return revision;
 }
