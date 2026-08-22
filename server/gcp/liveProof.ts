@@ -78,6 +78,11 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
   }
 
   const executionIdentity = buildGithubExecutionIdentity(env, sourceRevision);
+
+  // Effect identity is intentionally stable across GitHub re-run attempts. A run
+  // attempt is execution evidence, not new user intent. Keeping attempt-specific
+  // fields out of the OperationSpec preserves readback-before-retry/idempotency,
+  // while the receipt still records the full attempt-specific execution identity.
   const parameters = {
     proofKind: 'live_firestore_effect',
     sourceRevision,
@@ -85,13 +90,11 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
     repositoryOwnerId: executionIdentity.repositoryOwnerId,
     actorId: executionIdentity.actorId,
     workflowRunId: executionIdentity.workflowRunId,
-    workflowRunAttempt: executionIdentity.workflowRunAttempt,
-    executionIdentityHash: executionIdentity.identityHash,
     gcpProjectNumber,
     observedWifPrincipal,
   };
   const parametersHash = sha256Hex(canonicalJson(parameters));
-  const missionId = `gcp-live-${executionIdentity.workflowRunId}-${executionIdentity.workflowRunAttempt}`;
+  const missionId = `gcp-live-${executionIdentity.workflowRunId}`;
   const actionName = 'record_live_gcp_proof';
   const targetResource = `firestore:${collection}`;
   const operationId = `gcp-${sha256Hex(
