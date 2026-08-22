@@ -13,6 +13,7 @@ const SERVICE_ACCOUNT = 'prooffleet-github@prooffleet-test1.iam.gserviceaccount.
 function executionEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     GITHUB_REPOSITORY_ID: '1339097875',
+    GITHUB_REPOSITORY_OWNER_ID: '266194342',
     GITHUB_ACTOR_ID: '266194342',
     GITHUB_RUN_ID: '32516371741',
     GITHUB_RUN_ATTEMPT: '1',
@@ -48,10 +49,11 @@ function credential(overrides: Record<string, unknown> = {}): string {
 }
 
 describe('immutable execution identity', () => {
-  it('binds numeric repository/actor/run identities, exact source and runner fingerprint', () => {
+  it('binds numeric repository/owner/actor/run identities, exact source and runner fingerprint', () => {
     const identity = buildGithubExecutionIdentity(executionEnv(), SHA);
     expect(identity).toMatchObject({
       repositoryId: '1339097875',
+      repositoryOwnerId: '266194342',
       actorId: '266194342',
       workflowRunId: '32516371741',
       workflowRunAttempt: '1',
@@ -65,10 +67,12 @@ describe('immutable execution identity', () => {
     expect(JSON.stringify(identity)).not.toContain('GitHub Actions 1000221664');
   });
 
-  it('changes identity when run attempt or source revision changes', () => {
+  it('changes identity when owner, run attempt or source revision changes', () => {
     const first = buildGithubExecutionIdentity(executionEnv());
+    const ownerChanged = buildGithubExecutionIdentity(executionEnv({ GITHUB_REPOSITORY_OWNER_ID: '266194343' }));
     const second = buildGithubExecutionIdentity(executionEnv({ GITHUB_RUN_ATTEMPT: '2' }));
     const third = buildGithubExecutionIdentity(executionEnv({ GITHUB_SHA: 'b'.repeat(40) }));
+    expect(first.identityHash).not.toBe(ownerChanged.identityHash);
     expect(first.identityHash).not.toBe(second.identityHash);
     expect(first.identityHash).not.toBe(third.identityHash);
   });
@@ -76,6 +80,8 @@ describe('immutable execution identity', () => {
   it('fails closed on missing, zero, nonnumeric or mismatched GitHub identities', () => {
     expect(() => buildGithubExecutionIdentity(executionEnv({ GITHUB_REPOSITORY_ID: '' })))
       .toThrow('GITHUB_REPOSITORY_ID is required');
+    expect(() => buildGithubExecutionIdentity(executionEnv({ GITHUB_REPOSITORY_OWNER_ID: '0' })))
+      .toThrow('positive decimal identifier');
     expect(() => buildGithubExecutionIdentity(executionEnv({ GITHUB_RUN_ID: '0' })))
       .toThrow('positive decimal identifier');
     expect(() => buildGithubExecutionIdentity(executionEnv({ GITHUB_ACTOR_ID: 'owner-user' })))
@@ -112,6 +118,16 @@ describe('Google WIF credential evidence parser', () => {
     expect(evidence.credentialConfigSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(evidence)).not.toContain('runner-request-token');
     expect(JSON.stringify(evidence)).not.toContain('Authorization');
+  });
+
+  it('hashes only validated non-secret configuration, not the short-lived bearer value', () => {
+    const first = parseGoogleWifCredentialEvidence(credential(), PROVIDER, SERVICE_ACCOUNT);
+    const parsed = JSON.parse(credential()) as Record<string, unknown>;
+    const source = parsed.credential_source as Record<string, unknown>;
+    const headers = source.headers as Record<string, unknown>;
+    headers.Authorization = 'Bearer completely-different-short-lived-token';
+    const second = parseGoogleWifCredentialEvidence(JSON.stringify(parsed), PROVIDER, SERVICE_ACCOUNT);
+    expect(first.credentialConfigSha256).toBe(second.credentialConfigSha256);
   });
 
   it('fails on top-level or nested parser drift instead of ignoring extra fields', () => {
@@ -152,7 +168,7 @@ describe('Google WIF credential evidence parser', () => {
     )).toThrow('impersonation target');
   });
 
-  it('binds execution identity and exact credential bytes into a deterministic conjunction hash', () => {
+  it('binds execution identity and secret-free credential configuration into a deterministic conjunction hash', () => {
     const execution = buildGithubExecutionIdentity(executionEnv());
     const firstCredential = parseGoogleWifCredentialEvidence(credential(), PROVIDER, SERVICE_ACCOUNT);
     const first = bindExecutionToCredential(execution, firstCredential);
