@@ -8,6 +8,10 @@ import type { OperationSpec } from '../../src/types/index';
 
 export const LIVE_GCP_CONFIRMATION = 'I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE';
 
+export interface LiveGcpExecutionIdentity extends GithubExecutionIdentity {
+  workflowContextSha: string;
+}
+
 export interface LiveGcpProofPlan {
   projectId: string;
   gcpProjectNumber: string;
@@ -15,7 +19,7 @@ export interface LiveGcpProofPlan {
   serviceName: string;
   collection: string;
   sourceRevision: string;
-  executionIdentity: GithubExecutionIdentity;
+  executionIdentity: LiveGcpExecutionIdentity;
   wifProvider: string;
   wifServiceAccount: string;
   observedWifPrincipal: string;
@@ -49,6 +53,43 @@ function validServiceAccount(value: string): boolean {
   return /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$/.test(value);
 }
 
+function buildCheckedSourceExecutionIdentity(
+  env: NodeJS.ProcessEnv,
+  checkedSourceRevision: string,
+): LiveGcpExecutionIdentity {
+  const sourceRevision = requireExactGitRevision(checkedSourceRevision);
+  const workflowContextSha = requireExactGitRevision(required(env, 'GITHUB_SHA'));
+
+  // GitHub deliberately sets GITHUB_SHA to a synthetic merge commit for
+  // pull_request events. The live-proof workflow independently verifies that
+  // git HEAD equals PROOFFLEET_SOURCE_REVISION, so the checked source and the
+  // event/workflow context are two distinct identities. Reuse the strict
+  // numeric/runner parser for the checked source, then bind the real workflow
+  // context SHA into a new identity hash instead of pretending both SHAs match.
+  const checkedSourceIdentity = buildGithubExecutionIdentity(
+    { ...env, GITHUB_SHA: sourceRevision },
+    sourceRevision,
+  );
+  const body = {
+    repositoryId: checkedSourceIdentity.repositoryId,
+    repositoryOwnerId: checkedSourceIdentity.repositoryOwnerId,
+    actorId: checkedSourceIdentity.actorId,
+    workflowRunId: checkedSourceIdentity.workflowRunId,
+    workflowRunAttempt: checkedSourceIdentity.workflowRunAttempt,
+    sourceRevision: checkedSourceIdentity.sourceRevision,
+    workflowContextSha,
+    runnerEnvironment: checkedSourceIdentity.runnerEnvironment,
+    runnerOs: checkedSourceIdentity.runnerOs,
+    runnerArch: checkedSourceIdentity.runnerArch,
+    runnerNameHash: checkedSourceIdentity.runnerNameHash,
+  };
+
+  return {
+    ...body,
+    identityHash: sha256Hex(canonicalJson(body)),
+  };
+}
+
 export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan {
   const projectId = required(env, 'GCP_PROJECT_ID');
   const gcpProjectNumber = required(env, 'PROOFFLEET_GCP_PROJECT_NUMBER');
@@ -77,7 +118,7 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
     throw new Error('authenticated WIF principal does not match configured WIF service account');
   }
 
-  const executionIdentity = buildGithubExecutionIdentity(env, sourceRevision);
+  const executionIdentity = buildCheckedSourceExecutionIdentity(env, sourceRevision);
 
   // Effect identity is intentionally stable across GitHub re-run attempts. A run
   // attempt is execution evidence, not new user intent. Keeping attempt-specific
