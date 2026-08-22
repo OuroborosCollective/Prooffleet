@@ -83,7 +83,7 @@ describe('Live GCP proof plan', () => {
 
   it('rejects malformed workflow context instead of dropping it from execution evidence', () => {
     expect(() => buildLiveGcpProofPlan(env({ GITHUB_SHA: 'merge-ref' })))
-      .toThrow(/exact lowercase 40-character Git SHA/);
+      .toThrow(/exact lowercase 40-character Git source revision/);
   });
 
   it('changes operation identity when immutable owner or actor authority changes', () => {
