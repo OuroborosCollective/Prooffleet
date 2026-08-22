@@ -5,22 +5,22 @@ import { describe, expect, it } from 'vitest';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workflow = readFileSync(join(here, '../.github/workflows/ci.yml'), 'utf8');
+const CHECKOUT_PIN = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1';
+const SETUP_NODE_PIN = 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020';
 
 function count(source: string, needle: string): number {
   return source.split(needle).length - 1;
 }
 
 describe('ProofFleet CI action-runtime contract', () => {
-  it('uses Node-24-ready GitHub action majors for every checkout and setup-node step', () => {
-    expect(count(workflow, 'uses: actions/checkout@v7')).toBe(3);
-    expect(count(workflow, 'uses: actions/setup-node@v7')).toBe(3);
-    expect(workflow).not.toContain('actions/checkout@v4');
-    expect(workflow).not.toContain('actions/setup-node@v4');
-    expect(workflow).not.toMatch(/actions\/checkout@v[1-6]\b/);
-    expect(workflow).not.toMatch(/actions\/setup-node@v[1-6]\b/);
+  it('pins every checkout and setup-node invocation to the reviewed full commit SHA', () => {
+    expect(count(workflow, `uses: ${CHECKOUT_PIN}`)).toBe(3);
+    expect(count(workflow, `uses: ${SETUP_NODE_PIN}`)).toBe(3);
+    expect(workflow).not.toMatch(/actions\/checkout@v\d+\b/);
+    expect(workflow).not.toMatch(/actions\/setup-node@v\d+\b/);
   });
 
-  it('keeps application execution on Node.js 22 while action internals move independently to Node 24', () => {
+  it('keeps application execution on Node.js 22 while action internals move independently', () => {
     expect(count(workflow, 'node-version: 22')).toBe(3);
     expect(workflow).not.toContain('node-version: 24');
   });
