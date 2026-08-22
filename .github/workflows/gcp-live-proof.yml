@@ -37,12 +37,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      GCP_PROJECT_ID: ${{ vars.PROOFFLEET_GCP_PROJECT_ID }}
-      GCP_REGION: ${{ vars.PROOFFLEET_GCP_REGION }}
-      GCP_WIF_PROVIDER: ${{ vars.PROOFFLEET_GCP_WIF_PROVIDER }}
-      GCP_WIF_SERVICE_ACCOUNT: ${{ vars.PROOFFLEET_GCP_WIF_SERVICE_ACCOUNT }}
-      PROOFFLEET_CLOUDRUN_SERVICE: ${{ vars.PROOFFLEET_CLOUDRUN_SERVICE }}
-      PROOFFLEET_FIRESTORE_COLLECTION: ${{ vars.PROOFFLEET_FIRESTORE_COLLECTION }}
+      GCP_PROJECT_ID: project-b29d4703-a302-4b05-b2e
+      GCP_REGION: europe-west1
+      GCP_WIF_PROVIDER: projects/511695074775/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo
+      GCP_WIF_SERVICE_ACCOUNT: prooffleet-github@project-b29d4703-a302-4b05-b2e.iam.gserviceaccount.com
+      PROOFFLEET_CLOUDRUN_SERVICE: prooffleet
+      PROOFFLEET_FIRESTORE_COLLECTION: prooffleet-live-proofs
       EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'
       EXPECTED_GITHUB_REPOSITORY_OWNER_ID: '266194342'
       EXPECTED_GITHUB_ACTOR_ID: '266194342'
