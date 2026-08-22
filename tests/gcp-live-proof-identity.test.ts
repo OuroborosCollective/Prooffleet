@@ -20,7 +20,7 @@ describe('live GCP credential evidence workflow',()=>{
   expect(workflow).toContain('PROOFFLEET_WIF_PRINCIPAL');
   expect(workflow).toContain('PROOFFLEET_GCP_PROJECT_NUMBER');
  });
- it('binds artifact identity to run, attempt and source SHA',()=>{
-  expect(workflow).toContain('prooffleet-gcp-live-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}');
+ it('binds artifact identity to run, attempt and exact checked source SHA',()=>{
+  expect(workflow).toContain('prooffleet-gcp-live-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.PROOFFLEET_SOURCE_REVISION }}');
  });
 });
