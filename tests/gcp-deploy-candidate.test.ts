@@ -31,6 +31,18 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain('I_APPROVE_PROOFFLEET_CANDIDATE_DEPLOY');
   });
 
+  it('uses immutable numeric GitHub IDs as authority and display names only as admission context', () => {
+    expect(workflow).toContain("EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'");
+    expect(workflow).toContain("EXPECTED_GITHUB_REPOSITORY_OWNER_ID: '266194342'");
+    expect(workflow).toContain("EXPECTED_GITHUB_ACTOR_ID: '266194342'");
+    expect(workflow).toContain('GITHUB_REPOSITORY_OWNER_ID');
+    expect(workflow).toContain('PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}');
+    expect(workflow).toContain('PR_HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id }}');
+    expect(workflow).toContain('GitHub repository ID does not match the approved repository.');
+    expect(workflow).toContain('GitHub repository owner ID does not match the approved owner.');
+    expect(workflow).toContain('GitHub actor ID does not match the approved operator.');
+  });
+
   it('binds a pre-merge deployment to the PR source head and never to the synthetic merge SHA', () => {
     expect(workflow).toContain("EXPECTED_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.expected_source_revision }}");
     expect(workflow).toContain('ref: ${{ env.EXPECTED_SOURCE_REVISION }}');
@@ -46,6 +58,14 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain('GCP_DEPLOY_SERVICE_ACCOUNT');
     expect(workflow).not.toContain('credentials_json');
     expect(workflow).not.toContain('GOOGLE_APPLICATION_CREDENTIALS=');
+  });
+
+  it('passes independently read project numbers into the credential parser instead of relying on unexported shell locals', () => {
+    expect(workflow).toContain('"$CREDENTIAL_PATH" "$GITHUB_OUTPUT" "$PROJECT_NUMBER" "$PROVIDER_PROJECT_NUMBER"');
+    expect(workflow).toContain('const [credentialPath, outputPath, projectNumber, providerProjectNumber] = process.argv.slice(2);');
+    expect(workflow).toContain('credential.wifProviderProjectNumber !== projectNumber');
+    expect(workflow).not.toContain('process.env.PROJECT_NUMBER');
+    expect(workflow).not.toContain('process.env.PROVIDER_PROJECT_NUMBER');
   });
 
   it('builds an immutable source-SHA-tagged image and requires a sha256 OCI index digest', () => {
@@ -92,6 +112,7 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain("String(labels['prooffleet-candidate']) !== 'true'");
     expect(workflow).toContain('image.includes(`@${expectedIndexDigest}`)');
     expect(workflow).toContain('direct deploy response source env mismatch');
+    expect(workflow).toContain('revision_name=${revision}');
     expect(workflow).toContain('gcloud run revisions describe "$REVISION"');
     expect(workflow).not.toContain('gcloud run revisions list');
     expect(workflow).not.toContain('status?.latestCreatedRevisionName');
@@ -153,11 +174,15 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).not.toContain('511695074775-compute@developer.gserviceaccount.com');
   });
 
-  it('produces a v2 receipt with index-to-runtime-manifest evidence before HTTP or ADK observation', () => {
-    expect(workflow).toContain("schemaVersion: 'prooffleet.gcp-deploy-candidate.v2'");
+  it('produces a v3 receipt with execution, credential, artifact and readback identity', () => {
+    expect(workflow).toContain("schemaVersion: 'prooffleet.gcp-deploy-candidate.v3'");
     expect(workflow).toContain("outcome: 'OBSERVED_NO_TRAFFIC_CANDIDATE'");
+    expect(workflow).toContain('repositoryOwnerId: process.env.GITHUB_REPOSITORY_OWNER_ID');
+    expect(workflow).toContain('executionIdentityHash: process.env.EXECUTION_IDENTITY_HASH');
+    expect(workflow).toContain('credentialConfigSha256: process.env.CREDENTIAL_CONFIG_SHA256');
+    expect(workflow).toContain('executionCredentialBindingHash: process.env.EXECUTION_CREDENTIAL_BINDING_HASH');
     expect(workflow).toContain('imageDigest: expectedRuntimeDigest');
-    expect(workflow).toContain('imageIndexDigest: expectedIndexDigest');
+    expect(workflow).toContain('imageIndexDigest: process.env.IMAGE_INDEX_DIGEST');
     expect(workflow).toContain('runtimeImageDigest: expectedRuntimeDigest');
     expect(workflow).toContain("runtimePlatform: 'linux/amd64'");
     expect(workflow).toContain('imageIndexToRuntimeManifestVerified: true');
@@ -167,6 +192,7 @@ describe('GCP candidate deploy safety contract', () => {
     expect(workflow).toContain('adkCanaryObserved: false');
     expect(workflow).toContain('receipt.httpHealthObserved = true');
     expect(workflow).toContain("receipt.adkCanaryObserved = canary.status === 'OBSERVED'");
+    expect(workflow).toContain('Require candidate v3 receipt identity before upload');
     expect(workflow).toContain('Upload candidate deployment receipt');
   });
 
