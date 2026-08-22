@@ -33,26 +33,36 @@ function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 describe('Live GCP proof plan', () => {
-  it('binds operation identity to exact source, repository, owner, actor, run attempt and authenticated GCP identity', () => {
-    const first = buildLiveGcpProofPlan(env());
-    const second = buildLiveGcpProofPlan(env({ GITHUB_RUN_ATTEMPT: '2' }));
+  it('binds effect identity to exact source, repository, owner, actor, workflow run and authenticated GCP identity', () => {
+    const plan = buildLiveGcpProofPlan(env());
 
-    expect(first.operation.parameters).toMatchObject({
+    expect(plan.operation.parameters).toMatchObject({
       sourceRevision: SHA,
       repositoryId: '1339097875',
       repositoryOwnerId: '266194342',
       actorId: '266194342',
       workflowRunId: '12345',
-      workflowRunAttempt: '1',
-      executionIdentityHash: first.executionIdentity.identityHash,
       gcpProjectNumber: PROJECT_NUMBER,
       observedWifPrincipal: WIF_SERVICE_ACCOUNT,
     });
-    expect(first.executionIdentity.repositoryOwnerId).toBe('266194342');
-    expect(first.gcpProjectNumber).toBe(PROJECT_NUMBER);
-    expect(first.observedWifPrincipal).toBe(WIF_SERVICE_ACCOUNT);
-    expect(first.operation.operationId).not.toBe(second.operation.operationId);
-    expect(first.operation.targetResource).toBe('firestore:proof-effects');
+    expect(plan.operation.parameters).not.toHaveProperty('workflowRunAttempt');
+    expect(plan.operation.parameters).not.toHaveProperty('executionIdentityHash');
+    expect(plan.executionIdentity.repositoryOwnerId).toBe('266194342');
+    expect(plan.gcpProjectNumber).toBe(PROJECT_NUMBER);
+    expect(plan.observedWifPrincipal).toBe(WIF_SERVICE_ACCOUNT);
+    expect(plan.operation.targetResource).toBe('firestore:proof-effects');
+  });
+
+  it('keeps Firestore effect identity stable across GitHub re-runs while execution evidence remains attempt-specific', () => {
+    const first = buildLiveGcpProofPlan(env());
+    const rerun = buildLiveGcpProofPlan(env({ GITHUB_RUN_ATTEMPT: '2' }));
+
+    expect(first.executionIdentity.workflowRunAttempt).toBe('1');
+    expect(rerun.executionIdentity.workflowRunAttempt).toBe('2');
+    expect(first.executionIdentity.identityHash).not.toBe(rerun.executionIdentity.identityHash);
+    expect(first.operation.operationId).toBe(rerun.operation.operationId);
+    expect(first.operation.parametersHash).toBe(rerun.operation.parametersHash);
+    expect(first.operation.missionId).toBe(rerun.operation.missionId);
   });
 
   it('changes operation identity when immutable owner or actor authority changes', () => {
