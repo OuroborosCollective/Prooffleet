@@ -19,20 +19,35 @@ class MemoryStore implements FirestoreEffectStore {
   readonly projectId = 'project-test';
   readonly collection = 'proof-effects';
   private docs = new Map<string, FirestoreEffectIdentity | Record<string, unknown>>();
-  setCalls = 0;
+  createCalls = 0;
 
   async get(documentId: string): Promise<FirestoreEffectSnapshot> {
     const data = this.docs.get(documentId);
     return data ? { exists: true, data: structuredClone(data) } : { exists: false };
   }
 
-  async set(documentId: string, data: FirestoreEffectIdentity): Promise<void> {
-    this.setCalls += 1;
+  async create(documentId: string, data: FirestoreEffectIdentity): Promise<void> {
+    this.createCalls += 1;
+    if (this.docs.has(documentId)) throw new Error('ALREADY_EXISTS');
     this.docs.set(documentId, structuredClone(data));
   }
 
-  seed(documentId: string, data: Record<string, unknown>) {
+  seed(documentId: string, data: Record<string, unknown>): void {
     this.docs.set(documentId, structuredClone(data));
+  }
+}
+
+class RacingStore extends MemoryStore {
+  constructor(private readonly race: 'same' | 'conflict') {
+    super();
+  }
+
+  override async create(documentId: string, data: FirestoreEffectIdentity): Promise<void> {
+    this.createCalls += 1;
+    this.seed(documentId, this.race === 'same'
+      ? data
+      : { ...data, parametersHash: 'race-conflicting-parameters-hash' });
+    throw new Error('ALREADY_EXISTS');
   }
 }
 
@@ -67,7 +82,7 @@ describe('Firestore proof effect', () => {
     expect(result.status).toBe('applied');
     expect(result.sourceKind).toBe('FIRESTORE_READBACK');
     expect(result.sourceRevision).toBe(REV_A);
-    expect(store.setCalls).toBe(1);
+    expect(store.createCalls).toBe(1);
   });
 
   it('treats an exact existing effect as already_applied and does not write again', async () => {
@@ -78,7 +93,7 @@ describe('Firestore proof effect', () => {
     const executor = new FirestoreOperatorExecutor(store, REV_A);
     const result = await executor.execute(operation, grantFor(operation));
     expect(result.status).toBe('already_applied');
-    expect(store.setCalls).toBe(1);
+    expect(store.createCalls).toBe(1);
   });
 
   it('fails closed when the same operationId already contains a different identity', async () => {
@@ -98,7 +113,36 @@ describe('Firestore proof effect', () => {
     const result = await executor.execute(operation, grantFor(operation));
     expect(result.status).toBe('failed');
     expect(result.detail).toContain('readback conflict');
-    expect(store.setCalls).toBe(0);
+    expect(store.createCalls).toBe(0);
+  });
+
+  it('treats an atomic create race won by the same identity as already_applied', async () => {
+    const store = new RacingStore('same');
+    const operation = spec('op-race-same');
+    const executor = new FirestoreOperatorExecutor(store, REV_A);
+
+    const result = await executor.execute(operation, grantFor(operation));
+
+    expect(result.status).toBe('already_applied');
+    expect(result.sourceKind).toBe('FIRESTORE_READBACK');
+    expect(result.sourceRevision).toBe(REV_A);
+    expect(store.createCalls).toBe(1);
+    expect((await store.get(operation.operationId)).data?.parametersHash).toBe(operation.parametersHash);
+  });
+
+  it('never overwrites an atomic create race won by a conflicting identity', async () => {
+    const store = new RacingStore('conflict');
+    const operation = spec('op-race-conflict');
+    const executor = new FirestoreOperatorExecutor(store, REV_A);
+
+    const result = await executor.execute(operation, grantFor(operation));
+    const surviving = await store.get(operation.operationId);
+
+    expect(result.status).toBe('failed');
+    expect(result.detail).toContain('readback conflict');
+    expect(store.createCalls).toBe(1);
+    expect(surviving.data?.parametersHash).toBe('race-conflicting-parameters-hash');
+    expect(surviving.data?.parametersHash).not.toBe(operation.parametersHash);
   });
 
   it('never writes when parametersHash does not match canonical parameters', async () => {
@@ -107,7 +151,7 @@ describe('Firestore proof effect', () => {
     const executor = new FirestoreOperatorExecutor(store, REV_A);
     const result = await executor.execute(operation, grantFor(operation));
     expect(result.status).toBe('failed');
-    expect(store.setCalls).toBe(0);
+    expect(store.createCalls).toBe(0);
   });
 
   it('rejects an operation spec bound to a different source revision before write', async () => {
@@ -117,7 +161,7 @@ describe('Firestore proof effect', () => {
     const result = await executor.execute(operation, grantFor(operation));
     expect(result.status).toBe('failed');
     expect(result.detail).toContain('readback failed');
-    expect(store.setCalls).toBe(0);
+    expect(store.createCalls).toBe(0);
   });
 
   it('keeps the real effect executor unavailable when exact source revision is missing or malformed', async () => {
