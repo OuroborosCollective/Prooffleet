@@ -31,7 +31,8 @@ export interface FirestoreEffectStore {
   readonly projectId: string;
   readonly collection: string;
   get(documentId: string): Promise<FirestoreEffectSnapshot>;
-  set(documentId: string, data: FirestoreEffectIdentity): Promise<void>;
+  /** Atomically create a previously absent effect. Existing documents must never be overwritten. */
+  create(documentId: string, data: FirestoreEffectIdentity): Promise<void>;
 }
 
 function expectedIdentity(
@@ -91,7 +92,7 @@ export class FirestoreEffectHandler implements OperationHandler {
 
   async apply(spec: OperationSpec): Promise<void> {
     const expected = expectedIdentity(spec, this.store.collection, this.sourceRevision);
-    await this.store.set(spec.operationId, expected);
+    await this.store.create(spec.operationId, expected);
   }
 
   async readback(spec: OperationSpec): Promise<unknown> {
@@ -188,7 +189,7 @@ export async function createRealFirestoreEffectStore(
     collection(name: string): {
       doc(id: string): {
         get(): Promise<{ exists: boolean; data(): Record<string, unknown> | undefined }>;
-        set(data: Record<string, unknown>): Promise<unknown>;
+        create(data: Record<string, unknown>): Promise<unknown>;
       };
     };
   })({ projectId });
@@ -203,8 +204,11 @@ export async function createRealFirestoreEffectStore(
         data: snapshot.exists ? snapshot.data() : undefined,
       };
     },
-    async set(documentId: string, data: FirestoreEffectIdentity): Promise<void> {
-      await db.collection(collection).doc(documentId).set(data);
+    async create(documentId: string, data: FirestoreEffectIdentity): Promise<void> {
+      // Firestore DocumentReference.create() is atomic and fails with ALREADY_EXISTS
+      // when another writer wins the race. OperationExecutor then performs another
+      // authoritative readback: exact identity => already_applied; mismatch => conflict.
+      await db.collection(collection).doc(documentId).create(data);
     },
   };
 }
