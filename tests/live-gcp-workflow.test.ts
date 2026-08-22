@@ -18,6 +18,25 @@ describe('Live GCP proof workflow safety', () => {
     expect(workflow).not.toMatch(/^\s*push:/m);
   });
 
+  it('binds the approved non-secret live-proof target in source instead of depending on unset mutable repository variables', () => {
+    expect(workflow).toContain('GCP_PROJECT_ID: project-b29d4703-a302-4b05-b2e');
+    expect(workflow).toContain('GCP_REGION: europe-west1');
+    expect(workflow).toContain('GCP_WIF_PROVIDER: projects/511695074775/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo');
+    expect(workflow).toContain('GCP_WIF_SERVICE_ACCOUNT: prooffleet-github@project-b29d4703-a302-4b05-b2e.iam.gserviceaccount.com');
+    expect(workflow).toContain('PROOFFLEET_CLOUDRUN_SERVICE: prooffleet');
+    expect(workflow).toContain('PROOFFLEET_FIRESTORE_COLLECTION: prooffleet-live-proofs');
+    for (const variable of [
+      'PROOFFLEET_GCP_PROJECT_ID',
+      'PROOFFLEET_GCP_REGION',
+      'PROOFFLEET_GCP_WIF_PROVIDER',
+      'PROOFFLEET_GCP_WIF_SERVICE_ACCOUNT',
+      'PROOFFLEET_CLOUDRUN_SERVICE',
+      'PROOFFLEET_FIRESTORE_COLLECTION',
+    ]) {
+      expect(workflow).not.toContain(`vars.${variable}`);
+    }
+  });
+
   it('uses OIDC/WIF instead of long-lived service-account key JSON', () => {
     expect(workflow).toContain('id-token: write');
     expect(workflow).toContain('google-github-actions/auth@v3');
