@@ -42,6 +42,7 @@ function asRecord(label: string, value: unknown): Record<string, unknown> {
 
 export interface GithubExecutionIdentity {
   repositoryId: string;
+  repositoryOwnerId: string;
   actorId: string;
   workflowRunId: string;
   workflowRunAttempt: string;
@@ -54,15 +55,19 @@ export interface GithubExecutionIdentity {
 }
 
 /**
- * Builds a run-scoped identity from GitHub's numeric IDs and exact checked
- * source revision. Mutable display names, labels and workflow paths are
- * intentionally excluded from the authoritative identity body.
+ * Builds a run-scoped identity from GitHub's immutable numeric IDs and exact
+ * checked source revision. Mutable display names, labels and workflow paths
+ * are intentionally excluded from the authoritative identity body.
  */
 export function buildGithubExecutionIdentity(
   env: NodeJS.ProcessEnv,
   expectedSourceRevision?: string,
 ): GithubExecutionIdentity {
   const repositoryId = requirePositiveDecimal('GITHUB_REPOSITORY_ID', required(env, 'GITHUB_REPOSITORY_ID'));
+  const repositoryOwnerId = requirePositiveDecimal(
+    'GITHUB_REPOSITORY_OWNER_ID',
+    required(env, 'GITHUB_REPOSITORY_OWNER_ID'),
+  );
   const actorId = requirePositiveDecimal('GITHUB_ACTOR_ID', required(env, 'GITHUB_ACTOR_ID'));
   const workflowRunId = requirePositiveDecimal('GITHUB_RUN_ID', required(env, 'GITHUB_RUN_ID'));
   const workflowRunAttempt = requirePositiveDecimal('GITHUB_RUN_ATTEMPT', required(env, 'GITHUB_RUN_ATTEMPT'));
@@ -93,6 +98,7 @@ export function buildGithubExecutionIdentity(
   const runnerName = requireNonEmpty('RUNNER_NAME', required(env, 'RUNNER_NAME'));
   const body = {
     repositoryId,
+    repositoryOwnerId,
     actorId,
     workflowRunId,
     workflowRunAttempt,
@@ -127,7 +133,7 @@ export interface GoogleWifCredentialEvidence {
  * google-github-actions/auth for WIF-through-service-account credentials.
  * Unknown/missing fields fail closed so upstream parser drift cannot silently
  * weaken the evidence chain. Secret-bearing credential_source headers are
- * validated for presence but never returned.
+ * validated for presence but are neither returned nor included in the hash.
  */
 export function parseGoogleWifCredentialEvidence(
   rawCredentialJson: string,
@@ -216,17 +222,35 @@ export function parseGoogleWifCredentialEvidence(
     throw new Error('credential impersonation target does not match expected service account');
   }
 
-  return {
-    configShapeVersion: 'google-github-actions-auth-external-account.v1',
-    credentialType: 'external_account',
+  const evidenceWithoutHash = {
+    configShapeVersion: 'google-github-actions-auth-external-account.v1' as const,
+    credentialType: 'external_account' as const,
     wifProvider: expectedProvider,
     wifProviderProjectNumber: providerMatch[1],
     serviceAccount: expectedServiceAccount,
     audience,
-    subjectTokenType: 'urn:ietf:params:oauth:token-type:jwt',
-    tokenUrl: 'https://sts.googleapis.com/v1/token',
+    subjectTokenType: 'urn:ietf:params:oauth:token-type:jwt' as const,
+    tokenUrl: 'https://sts.googleapis.com/v1/token' as const,
     credentialSourceHost: sourceUrl.hostname,
-    credentialConfigSha256: sha256Hex(rawCredentialJson),
+  };
+
+  const secretFreeConfig = {
+    ...evidenceWithoutHash,
+    credentialSourceOrigin: sourceUrl.origin,
+    credentialSourcePath: sourceUrl.pathname,
+    credentialSourceQueryKeys: [...sourceUrl.searchParams.keys()].sort(),
+    authorizationScheme: 'Bearer',
+    tokenFormat: {
+      type: 'json',
+      subjectTokenFieldName: 'value',
+    },
+    impersonationOrigin: impersonationUrl.origin,
+    impersonationPath: impersonationUrl.pathname,
+  };
+
+  return {
+    ...evidenceWithoutHash,
+    credentialConfigSha256: sha256Hex(canonicalJson(secretFreeConfig)),
   };
 }
 
@@ -238,6 +262,7 @@ export function bindExecutionToCredential(
     executionIdentityHash: executionIdentity.identityHash,
     credentialConfigSha256: credentialEvidence.credentialConfigSha256,
     wifProvider: credentialEvidence.wifProvider,
+    projectNumber: credentialEvidence.wifProviderProjectNumber,
     serviceAccount: credentialEvidence.serviceAccount,
   }));
 }
