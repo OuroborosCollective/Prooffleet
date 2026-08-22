@@ -1,5 +1,5 @@
-import { canonicalJson, sha256Hex } from './canonicalJson';
-import { requireExactGitRevision } from '../revisionIdentity';
+import { canonicalJson, sha256Hex } from './canonicalJson.ts';
+import { requireExactGitRevision } from '../revisionIdentity.ts';
 
 const POSITIVE_DECIMAL = /^[1-9]\d*$/;
 const SERVICE_ACCOUNT_EMAIL = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$/;
