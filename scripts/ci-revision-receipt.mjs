@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url';
 const SHA40 = /^[0-9a-f]{40}$/;
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const CONTAINER_ID = /^[0-9a-f]{64}$/;
 
 function requireSha(label, value) {
   if (typeof value !== 'string' || !SHA40.test(value.trim())) {
-    throw new Error(`${label} must be an exact lowercase 40-character Git SHA`);
+    throw new Error(label + ' must be an exact lowercase 40-character Git SHA');
   }
   return value.trim();
 }
@@ -16,7 +17,7 @@ function requireSha(label, value) {
 function requirePositiveInteger(label, value) {
   const normalized = String(value ?? '').trim();
   if (!POSITIVE_INTEGER.test(normalized)) {
-    throw new Error(`${label} must be a positive decimal integer`);
+    throw new Error(label + ' must be a positive decimal integer');
   }
   return normalized;
 }
@@ -24,7 +25,7 @@ function requirePositiveInteger(label, value) {
 function requireNonEmpty(label, value) {
   const normalized = String(value ?? '').trim();
   if (!normalized || normalized.length > 256 || /[\r\n\0]/.test(normalized)) {
-    throw new Error(`${label} must be a bounded single-line value`);
+    throw new Error(label + ' must be a bounded single-line value');
   }
   return normalized;
 }
@@ -32,13 +33,28 @@ function requireNonEmpty(label, value) {
 function requireSha256(label, value) {
   const normalized = String(value ?? '').trim();
   if (!SHA256.test(normalized)) {
-    throw new Error(`${label} must be an exact sha256 digest`);
+    throw new Error(label + ' must be an exact sha256 digest');
   }
   return normalized;
 }
 
+function requireContainerId(label, value) {
+  const normalized = String(value ?? '').trim();
+  if (!CONTAINER_ID.test(normalized)) {
+    throw new Error(label + ' must be an exact lowercase Docker container ID');
+  }
+  return normalized;
+}
+
+function requireObservedTrue(label, value) {
+  if (value !== true && value !== 'true') {
+    throw new Error(label + ' must be observed true');
+  }
+  return true;
+}
+
 export function sha256Text(value) {
-  return `sha256:${createHash('sha256').update(String(value), 'utf8').digest('hex')}`;
+  return 'sha256:' + createHash('sha256').update(String(value), 'utf8').digest('hex');
 }
 
 /**
@@ -49,7 +65,7 @@ export function buildRevisionReceipt(input) {
   const testedCheckoutSha = requireSha('checkedOutSha', input.checkedOutSha);
   const workflowSha = requireSha('githubSha', input.githubSha);
   if (testedCheckoutSha !== workflowSha) {
-    throw new Error(`checked-out revision ${testedCheckoutSha} does not match workflow GITHUB_SHA ${workflowSha}`);
+    throw new Error('checked-out revision ' + testedCheckoutSha + ' does not match workflow GITHUB_SHA ' + workflowSha);
   }
 
   const run = {
@@ -66,7 +82,9 @@ export function buildRevisionReceipt(input) {
     nameSha256: sha256Text(requireNonEmpty('runnerName', input.runnerName)),
   };
   const runtime = {
+    containerId: requireContainerId('containerId', input.containerId),
     containerImageId: requireSha256('containerImageId', input.containerImageId),
+    containerRunning: requireObservedTrue('containerRunning', input.containerRunning),
     healthReadbackSha256: requireSha256('healthReadbackSha256', input.healthReadbackSha256),
   };
 
@@ -82,7 +100,7 @@ export function buildRevisionReceipt(input) {
     baseSha = null;
     testedMergeSha = null;
   } else {
-    throw new Error(`unsupported CI event: ${input.eventName}`);
+    throw new Error('unsupported CI event: ' + input.eventName);
   }
 
   const evidenceIdentity = {
@@ -96,7 +114,7 @@ export function buildRevisionReceipt(input) {
   };
 
   return {
-    schemaVersion: 'prooffleet.ci-revision-receipt.v2',
+    schemaVersion: 'prooffleet.ci-revision-receipt.v3',
     eventName: input.eventName,
     ...evidenceIdentity,
     evidenceIdentitySha256: sha256Text(JSON.stringify(evidenceIdentity)),
@@ -106,7 +124,7 @@ export function buildRevisionReceipt(input) {
 function currentCheckedOutSha() {
   const result = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', cwd: process.cwd() });
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`git rev-parse HEAD failed with exit ${result.status}`);
+  if (result.status !== 0) throw new Error('git rev-parse HEAD failed with exit ' + result.status);
   return result.stdout.trim();
 }
 
@@ -126,17 +144,19 @@ function runCli() {
     runnerOs: process.env.RUNNER_OS,
     runnerArch: process.env.RUNNER_ARCH,
     runnerName: process.env.RUNNER_NAME,
+    containerId: process.env.CI_CONTAINER_ID,
     containerImageId: process.env.CI_CONTAINER_IMAGE_ID,
+    containerRunning: process.env.CI_CONTAINER_RUNNING,
     healthReadbackSha256: process.env.CI_HEALTH_READBACK_SHA256,
   });
-  process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+  process.stdout.write(JSON.stringify(receipt, null, 2) + '\n');
 }
 
 const invokedAsScript = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (invokedAsScript) {
   try { runCli(); }
   catch (error) {
-    console.error(`[ci-revision-receipt] FAILED: ${error instanceof Error ? error.message : String(error)}`);
+    console.error('[ci-revision-receipt] FAILED: ' + (error instanceof Error ? error.message : String(error)));
     process.exit(1);
   }
 }

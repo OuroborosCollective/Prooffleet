@@ -4,21 +4,22 @@ import { buildRevisionReceipt } from '../scripts/ci-revision-receipt.mjs';
 const SOURCE = '1'.repeat(40);
 const BASE = '2'.repeat(40);
 const MERGE = '3'.repeat(40);
-const IMAGE = `sha256:${'4'.repeat(64)}`;
-const HEALTH = `sha256:${'5'.repeat(64)}`;
+const CONTAINER = '4'.repeat(64);
+const IMAGE = 'sha256:' + '5'.repeat(64);
+const HEALTH = 'sha256:' + '6'.repeat(64);
 const identity = {
   runId: '32517685281', runAttempt: '1', repositoryId: '1339097875',
   repositoryOwnerId: '266194342', actorId: '266194342',
   runnerEnvironment: 'github-hosted', runnerOs: 'Linux', runnerArch: 'X64',
   runnerName: 'GitHub Actions 1000221664',
-  containerImageId: IMAGE, healthReadbackSha256: HEALTH,
+  containerId: CONTAINER, containerImageId: IMAGE, containerRunning: true, healthReadbackSha256: HEALTH,
 };
 
-describe('CI revision receipt v2', () => {
-  it('binds source, tested merge, immutable IDs, runner fingerprint and runtime readback', () => {
+describe('CI revision receipt v3', () => {
+  it('binds source, tested merge, immutable IDs, started container, runner fingerprint and health bytes', () => {
     const receipt = buildRevisionReceipt({ ...identity, eventName: 'pull_request', githubSha: MERGE,
       checkedOutSha: MERGE, pullRequestHeadSha: SOURCE, pullRequestBaseSha: BASE });
-    expect(receipt.schemaVersion).toBe('prooffleet.ci-revision-receipt.v2');
+    expect(receipt.schemaVersion).toBe('prooffleet.ci-revision-receipt.v3');
     expect(receipt.sourceHeadSha).toBe(SOURCE);
     expect(receipt.testedMergeSha).toBe(MERGE);
     expect(receipt.run.repositoryId).toBe(identity.repositoryId);
@@ -30,7 +31,12 @@ describe('CI revision receipt v2', () => {
       arch: 'X64',
       nameSha256: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
     });
-    expect(receipt.runtime).toEqual({ containerImageId: IMAGE, healthReadbackSha256: HEALTH });
+    expect(receipt.runtime).toEqual({
+      containerId: CONTAINER,
+      containerImageId: IMAGE,
+      containerRunning: true,
+      healthReadbackSha256: HEALTH,
+    });
     expect(receipt.evidenceIdentitySha256).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(JSON.stringify(receipt)).not.toContain(identity.runnerName);
   });
@@ -52,20 +58,24 @@ describe('CI revision receipt v2', () => {
     expect(() => buildRevisionReceipt({ ...identity, actorId: 'actor-name', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/positive decimal integer/);
   });
 
-  it('rejects malformed runtime hashes and missing runner instance identity', () => {
+  it('rejects malformed runtime identities and a container not observed running', () => {
+    expect(() => buildRevisionReceipt({ ...identity, containerId: 'short', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/Docker container ID/);
     expect(() => buildRevisionReceipt({ ...identity, containerImageId: 'latest', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/exact sha256 digest/);
+    expect(() => buildRevisionReceipt({ ...identity, containerRunning: false, eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/observed true/);
     expect(() => buildRevisionReceipt({ ...identity, healthReadbackSha256: 'healthy', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/exact sha256 digest/);
     expect(() => buildRevisionReceipt({ ...identity, runnerName: '', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE })).toThrow(/runnerName/);
   });
 
-  it('changes evidence identity when run, runner instance or runtime evidence changes', () => {
+  it('changes evidence identity when run, runner instance, container or runtime evidence changes', () => {
     const a = buildRevisionReceipt({ ...identity, eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
     const b = buildRevisionReceipt({ ...identity, runAttempt: '2', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
     const c = buildRevisionReceipt({ ...identity, runnerName: 'GitHub Actions 1000221665', eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
-    const d = buildRevisionReceipt({ ...identity, healthReadbackSha256: `sha256:${'6'.repeat(64)}`, eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
+    const d = buildRevisionReceipt({ ...identity, containerId: '7'.repeat(64), eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
+    const e = buildRevisionReceipt({ ...identity, healthReadbackSha256: 'sha256:' + '8'.repeat(64), eventName: 'push', githubSha: SOURCE, checkedOutSha: SOURCE });
     expect(a.evidenceIdentitySha256).not.toBe(b.evidenceIdentitySha256);
     expect(a.evidenceIdentitySha256).not.toBe(c.evidenceIdentitySha256);
     expect(a.evidenceIdentitySha256).not.toBe(d.evidenceIdentitySha256);
+    expect(a.evidenceIdentitySha256).not.toBe(e.evidenceIdentitySha256);
   });
 
   it('rejects unsupported event families', () => {
