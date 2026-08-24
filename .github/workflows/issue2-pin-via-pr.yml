@@ -1,0 +1,60 @@
+name: ProofFleet Issue 2 Action Pinning
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/issue2-pin-via-pr.yml
+      - scripts/pin-github-actions.mjs
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prooffleet-issue2-action-pinning
+  cancel-in-progress: false
+
+jobs:
+  pin-reviewed-action-commits:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'hardening/issue-2-action-sha-pins'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Setup Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Generate reviewed pins and permanent regression
+        run: node scripts/pin-github-actions.mjs
+      - name: Remove this temporary maintenance workflow
+        run: rm -f .github/workflows/issue2-pin-via-pr.yml
+      - name: Refuse unexpected output and commit once
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git status --short | awk '{print $2}')"
+          test -n "$changed" || { echo 'Issue #2 transformer produced no changes.' >&2; exit 2; }
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/*.yml|.github/workflows/*.yaml|tests/github-actions-sha-pinning.test.ts) ;;
+              *) echo "Unexpected issue #2 output path: $path" >&2; exit 2 ;;
+            esac
+          done <<< "$changed"
+          test ! -e .github/workflows/pin-actions-once.yml
+          test ! -e .github/workflows/issue2-pin-via-pr.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A .github/workflows tests/github-actions-sha-pinning.test.ts
+          git diff --cached --check
+          git commit -m 'security: pin privileged GitHub Actions to reviewed SHAs'
+          git push origin HEAD:hardening/issue-2-action-sha-pins
