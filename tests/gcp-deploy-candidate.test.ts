@@ -197,7 +197,9 @@ describe('GCP candidate deploy safety contract', () => {
   });
 
   it('produces a minimal production image from the immutable npm graph', () => {
-    expect(dockerfile).toContain('FROM node:22-bookworm-slim AS build');
+    expect(dockerfile).toContain('FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS build');
+    expect(dockerfile).toContain('FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS runtime');
+    expect(dockerfile).not.toContain('FROM node:22-bookworm-slim AS');
     expect(dockerfile).toContain('RUN npm ci --no-audit --no-fund');
     expect(dockerfile).toContain('RUN npm run build');
     expect(dockerfile).toContain('RUN npm ci --omit=dev --no-audit --no-fund');

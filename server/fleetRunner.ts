@@ -6,10 +6,9 @@
  * - KEIN Auto-Consent: die Mission geht in 'paused_for_consent' und bleibt dort,
  *   bis /api/consent/respond einen echten Operator-Grant liefert
  *   (resumeWithGrant). Es gibt keinen Timer und kein Auto-Approve.
- * - Rollenkontexte strikt: nur der gatekeeper bekommt requestConsent; nur
- *   builder/operator bekommen Executor-Zugang (hier: bewusst KEIN Executor,
- *   solange kein provisioniertes Execution-Target existiert — der Operator
- *   meldet dann ehrlich 'not_executed').
+ * - Rollenkontexte strikt: nur der Gatekeeper bekommt requestConsent; nur
+ *   der Operator kann autoritative Operationsevidence oder einen provisionierten
+ *   Effekt-Executor erreichen. Ohne Target meldet er ehrlich 'not_executed'.
  * - finalVerdict.judgeVerdict kommt vom Judge (server/evidence/judge) ueber die
  *   reale Evidence + Receipts. Keine hartcodierten Scores.
  */
@@ -51,6 +50,15 @@ import type {
 
 const PRE_GATE_ROLES = ["orchestrator", "scout", "builder", "analyst", "sentinel", "auditor"] as const;
 const FINALIZE_CLAIM = "mission finalized";
+const AUTHORITATIVE_EFFECT_SOURCE_KINDS = new Set([
+  "REPOSITORY_READBACK",
+  "CI_READBACK",
+  "CLOUD_RUN_READBACK",
+  "PUBSUB_READBACK",
+  "FIRESTORE_READBACK",
+  "API_READBACK",
+  "TEST_READBACK",
+]);
 
 interface FleetEvent {
   type: string;
@@ -197,7 +205,7 @@ export class FleetRunner {
         `Operator consent APPROVED by ${grant.operatorIdentity} — resuming mission.`,
         { requestId: grant.requestId, operationHash: grant.operationHash });
 
-      const operator = createOperatorAgent();
+      const operator = createOperatorAgent(undefined, this.consentEngine);
       const sharedMemory = this.memoryStoreFor("operator");
       sharedMemory.set("approvedConsent", grant);
       sharedMemory.set("pendingOperationSpec", request.spec);
@@ -304,6 +312,13 @@ export class FleetRunner {
     missionRevision: number
   ): Promise<AgentOutput> {
     const role = agent.role as AgentRole;
+    const registeredAgent = FLEET.find((candidate) => candidate.role === agent.role);
+    if (
+      !registeredAgent ||
+      registeredAgent.permissions.join(",") !== agent.permissions.join(",")
+    ) {
+      throw new Error(`capability_violation: unregistered role or permission drift for '${agent.role}'`);
+    }
     mission.activeAgentId = role;
     this.addStep(mission, role, "status_change", `${role} activated.`);
 
@@ -314,6 +329,17 @@ export class FleetRunner {
       inputGoal: mission.inputGoal,
       memory,
       emitEvidence: (claim, evidenceType, payload) => {
+        const sourceKind = payload.sourceKind;
+        const claimsAuthoritativeEffect =
+          evidenceType === "operation_result" ||
+          (typeof sourceKind === "string" &&
+            AUTHORITATIVE_EFFECT_SOURCE_KINDS.has(sourceKind));
+        if (claimsAuthoritativeEffect && role !== "operator") {
+          throw new Error(
+            `capability_violation: role '${role}' cannot emit authoritative operation evidence`,
+          );
+        }
+
         const block = this.ledger.seal({
           agentId: agent.role,
           claim,

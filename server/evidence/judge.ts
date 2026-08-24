@@ -49,6 +49,8 @@ function hasValidReceipt(block: EvidenceBlock, receipts: readonly EvidenceReceip
   return receipts.some(
     (receipt) =>
       receipt.payloadHash === block.payloadHash &&
+      receipt.manifestHash === block.manifestHash &&
+      receipt.missionRevision === block.missionRevision &&
       receipt.receiptHash === computeReceiptHash(receipt),
   );
 }

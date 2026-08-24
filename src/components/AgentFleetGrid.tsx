@@ -33,8 +33,10 @@ export const AgentFleetGrid: React.FC<AgentFleetGridProps> = ({
       case "orchestrator":
         return <Compass className="w-4 h-4 text-blue-600" />;
       case "researcher":
+      case "scout":
         return <Search className="w-4 h-4 text-cyan-600" />;
       case "engineer":
+      case "builder":
         return <Cpu className="w-4 h-4 text-purple-600" />;
       case "analyst":
         return <BarChart3 className="w-4 h-4 text-pink-600" />;
@@ -62,7 +64,7 @@ export const AgentFleetGrid: React.FC<AgentFleetGridProps> = ({
     }
   };
 
-  // Determine operational health state for each agent based on role & active execution
+  // This is a UI activity state, not an observed runtime-health assertion.
   const getAgentHealth = (role: AgentRole, isActive: boolean) => {
     if (role === "sentinel" && isActive) {
       return {
@@ -92,11 +94,11 @@ export const AgentFleetGrid: React.FC<AgentFleetGridProps> = ({
       };
     }
     return {
-      type: "green" as const,
-      label: "Healthy",
-      pulseBg: "bg-emerald-500",
-      badgeBg: "bg-emerald-50 text-emerald-700 border-emerald-200",
-      desc: "Contract Verified",
+      type: "neutral" as const,
+      label: "Idle",
+      pulseBg: "bg-slate-400",
+      badgeBg: "bg-slate-100 text-slate-700 border-slate-200",
+      desc: "No live runtime health assertion",
     };
   };
 
@@ -110,22 +112,22 @@ export const AgentFleetGrid: React.FC<AgentFleetGridProps> = ({
           </div>
           <div>
             <h2 className="text-sm font-bold text-slate-900">
-              8 Core Fleet Agents &amp; Operational Health
+              Fleet Role Map &amp; Evidence Activity
             </h2>
             <p className="text-xs text-slate-500">
-              Real-Time Telemetry, Evidence Revisions &amp; Backreadable Continuity State
+              Declared roles and evidence activity; runtime health needs a separate receipt.
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 text-xs font-semibold">
-          <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            8 Optimal
+          <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+            <span className="w-2 h-2 rounded-full bg-slate-400" />
+            {agents.length} Declared
           </span>
           <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200 font-mono text-[11px]">
             <Fingerprint className="w-3 h-3 text-slate-400" />
-            Continuity Linked
+            Evidence scoped
           </span>
         </div>
       </div>
@@ -162,7 +164,7 @@ export const AgentFleetGrid: React.FC<AgentFleetGridProps> = ({
                       className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white ${health.pulseBg} ${
                         isActive ? "animate-ping" : ""
                       }`}
-                      title={`Operational Health: ${health.label}`}
+                      title={`Display state: ${health.label} — ${health.desc}`}
                     />
                   </div>
                   <div>
@@ -202,7 +204,7 @@ export const AgentFleetGrid: React.FC<AgentFleetGridProps> = ({
                 <div className="p-1 rounded bg-slate-100 text-slate-600 font-mono text-[9px] truncate flex items-center justify-between">
                   <span className="text-slate-400">Hash:</span>
                   <span className="font-bold text-slate-800">
-                    {lastBlock ? `${lastBlock.hash.slice(0, 12)}...` : "GENESIS_ANCHOR"}
+                    {lastBlock ? `${lastBlock.hash.slice(0, 12)}...` : "NO_EVIDENCE"}
                   </span>
                 </div>
               </div>

@@ -87,6 +87,49 @@ describe('Judge authoritative proof requirements', () => {
     expect(verdict.verdict).toBe('VERIFIED');
   });
 
+  it('blocks a hash-valid receipt issued for a different manifest revision', () => {
+    const ledger = new EvidenceLedger();
+    const receipts = new ReceiptChain();
+    finalize(ledger, receipts);
+    const observed = ledger.seal({
+      agentId: 'operator',
+      claim: 'operation executed via executor',
+      payload: {
+        evidenceType: 'operation_result',
+        assertion: 'OBSERVED',
+        sourceKind: 'CLOUD_RUN_READBACK',
+        operationId: 'op-1',
+      },
+      manifestHash: MANIFEST,
+      missionRevision: 1,
+    });
+    const foreignReceipts = new ReceiptChain();
+    const foreignManifest = sha256Hex(canonicalJson({ missionId: 'other-mission', revision: 2 }));
+    foreignReceipts.issueReceipt({
+      missionId: 'other-mission',
+      missionRevision: 2,
+      manifestHash: foreignManifest,
+      payloadHash: observed.payloadHash,
+      createdBy: 'operator',
+    });
+
+    const verdict = Judge.judge(
+      'mission finalized',
+      ledger.getChain(),
+      [...receipts.exportReceipts(), ...foreignReceipts.exportReceipts()],
+      [{
+        requirementId: 'external_effect_readback',
+        evidenceType: 'operation_result',
+        allowedSourceKinds: ['CLOUD_RUN_READBACK'],
+        runtimeRequired: true,
+        operationId: 'op-1',
+      }],
+    );
+
+    expect(verdict.verdict).toBe('BLOCKED_BY_MISSING_EVIDENCE');
+    expect(verdict.missingEvidence).toContain('external_effect_readback');
+  });
+
   it('turns an authoritative contradiction into CONTRADICTED', () => {
     const ledger = new EvidenceLedger();
     const receipts = new ReceiptChain();

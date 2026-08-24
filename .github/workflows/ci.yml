@@ -118,7 +118,11 @@ jobs:
             echo "Docker did not return an immutable image ID: $IMAGE_ID" >&2
             exit 2
           fi
-          docker run --detach --name "$NAME" --env PORT=8080 --publish 127.0.0.1:3188:8080 "$IMAGE" >/dev/null
+          CONTAINER_ID="$(docker run --detach --name "$NAME" --env PORT=8080 --publish 127.0.0.1:3188:8080 "$IMAGE")"
+          if ! printf '%s' "$CONTAINER_ID" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "Docker did not return an exact container ID: $CONTAINER_ID" >&2
+            exit 2
+          fi
           cleanup() {
             docker logs "$NAME" || true
             docker rm --force "$NAME" >/dev/null 2>&1 || true
@@ -137,13 +141,32 @@ jobs:
             exit 1
           fi
           node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/prooffleet-container-health.json','utf8'));if(!j||typeof j!=='object'||Array.isArray(j))process.exit(2);console.log('[container-smoke] health readback received')"
-          HEALTH_SHA="sha256:$(sha256sum /tmp/prooffleet-container-health.json | awk '{print $1}')"
-          printf 'CI_CONTAINER_IMAGE_ID=%s\n' "$IMAGE_ID" >> "$GITHUB_ENV"
+          OBSERVED_CONTAINER_ID="$(docker inspect --format '{{.Id}}' "$NAME")"
+          OBSERVED_CONTAINER_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$NAME")"
+          OBSERVED_CONTAINER_RUNNING="$(docker inspect --format '{{.State.Running}}' "$NAME")"
+          if test "$OBSERVED_CONTAINER_ID" != "$CONTAINER_ID"; then
+            echo 'Started container identity does not match Docker run output.' >&2
+            exit 2
+          fi
+          if test "$OBSERVED_CONTAINER_IMAGE_ID" != "$IMAGE_ID"; then
+            echo 'Started container is not using the inspected build image ID.' >&2
+            exit 2
+          fi
+          if test "$OBSERVED_CONTAINER_RUNNING" != true; then
+            echo 'Container was not observed running after HTTP health readback.' >&2
+            exit 2
+          fi
+          cp /tmp/prooffleet-container-health.json ci-runtime-health.json
+          HEALTH_SHA="sha256:$(sha256sum ci-runtime-health.json | awk '{print $1}')"
+          printf 'CI_CONTAINER_ID=%s\n' "$OBSERVED_CONTAINER_ID" >> "$GITHUB_ENV"
+          printf 'CI_CONTAINER_IMAGE_ID=%s\n' "$OBSERVED_CONTAINER_IMAGE_ID" >> "$GITHUB_ENV"
+          printf 'CI_CONTAINER_RUNNING=%s\n' "$OBSERVED_CONTAINER_RUNNING" >> "$GITHUB_ENV"
           printf 'CI_HEALTH_READBACK_SHA256=%s\n' "$HEALTH_SHA" >> "$GITHUB_ENV"
-          echo "[container-smoke] immutable_image_id=$IMAGE_ID"
+          echo "[container-smoke] container_id=$OBSERVED_CONTAINER_ID"
+          echo "[container-smoke] immutable_image_id=$OBSERVED_CONTAINER_IMAGE_ID"
           echo "[container-smoke] health_readback_sha256=$HEALTH_SHA"
           echo '[container-smoke] exact Docker image passed HTTP runtime smoke on PORT=8080'
-      - name: Record source, run, runner, artifact and readback identities
+      - name: Record source, run, runner, container and readback identities
         shell: bash
         env:
           CI_EVENT_NAME: ${{ github.event_name }}
@@ -152,18 +175,44 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/ci-revision-receipt.mjs > ci-revision-receipt.json
-          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('ci-revision-receipt.json','utf8'));if(r.schemaVersion!=='prooffleet.ci-revision-receipt.v2'||!/^sha256:[0-9a-f]{64}$/.test(r.evidenceIdentitySha256))process.exit(2);console.log('[ci-receipt] v2 evidence identity bound',r.evidenceIdentitySha256)"
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('ci-revision-receipt.json','utf8'));if(r.schemaVersion!=='prooffleet.ci-revision-receipt.v3'||r.runtime?.containerRunning!==true||!/^[0-9a-f]{64}$/.test(r.runtime?.containerId||'')||!/^sha256:[0-9a-f]{64}$/.test(r.evidenceIdentitySha256))process.exit(2);console.log('[ci-receipt] v3 evidence identity bound',r.evidenceIdentitySha256)"
           {
-            echo '### ProofFleet CI revision receipt v2'
-            echo '```json'
+            echo '### ProofFleet CI revision receipt v3'
+            echo '~~~json'
             cat ci-revision-receipt.json
-            echo '```'
+            echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload CI evidence identity receipt
+      - name: Upload CI runtime evidence payload
+        id: upload_runtime_evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: prooffleet-ci-revision-receipt-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ci-revision-receipt.json
+          name: prooffleet-ci-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ci-revision-receipt.json
+            ci-runtime-health.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Bind GitHub artifact identity to CI receipt and health bytes
+        shell: bash
+        env:
+          CI_ARTIFACT_ID: ${{ steps.upload_runtime_evidence.outputs.artifact-id }}
+          CI_ARTIFACT_DIGEST: sha256:${{ steps.upload_runtime_evidence.outputs.artifact-digest }}
+          CI_ARTIFACT_NAME: prooffleet-ci-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          node scripts/ci-artifact-binding.mjs > ci-artifact-binding.json
+          node -e "const fs=require('fs');const b=JSON.parse(fs.readFileSync('ci-artifact-binding.json','utf8'));if(b.schemaVersion!=='prooffleet.ci-artifact-binding.v1'||b.runtimeHealthArtifactSha256!==b.receipt?.runtimeHealthReadbackSha256||!/^sha256:[0-9a-f]{64}$/.test(b.bindingSha256))process.exit(2);console.log('[ci-artifact-binding] evidence artifact bound',b.runtimeEvidenceArtifact.id,b.runtimeEvidenceArtifact.digest)"
+          {
+            echo '### ProofFleet CI artifact binding'
+            echo '~~~json'
+            cat ci-artifact-binding.json
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload CI artifact binding receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prooffleet-ci-artifact-binding-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-artifact-binding.json
           if-no-files-found: error
           retention-days: 30
 
@@ -194,7 +243,8 @@ jobs:
 # Evidence identity contract:
 # - Mutable display descriptors (workflow names/paths, labels, actor names) are context only.
 # - Authoritative CI evidence binds exact source/tested revisions, GitHub run ID/attempt,
-#   numeric repository/owner/actor IDs, runner environment/OS/arch, immutable Docker image ID,
-#   and the SHA-256 of the observed runtime health response.
-# - The receipt itself is uploaded as a run-scoped artifact and carries a hash over those fields.
+#   numeric repository/owner/actor IDs, runner environment/OS/arch, exact started-container ID,
+#   immutable Docker image ID, and the SHA-256 of the observed runtime health response.
+# - The runtime receipt and raw health bytes are uploaded first. A second binding receipt records
+#   GitHub's returned artifact ID and archive digest, then is uploaded as a run-scoped artifact.
 # - Pull-request verification keeps source head distinct from GitHub's tested synthetic merge.

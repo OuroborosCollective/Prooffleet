@@ -177,6 +177,29 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
+      - name: Prove ADK WIF principal, project and credential configuration
+        id: wif
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
+          ACTIVE_PROJECT="$(gcloud config get-value project 2>/dev/null)"
+          PROJECT_NUMBER="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')"
+          CREDENTIAL_PATH="${GOOGLE_APPLICATION_CREDENTIALS:-}"
+          if test -z "$CREDENTIAL_PATH" || ! test -s "$CREDENTIAL_PATH"; then
+            echo 'Generated WIF credential file is missing.' >&2
+            exit 2
+          fi
+          node scripts/verify-wif-identity.mjs \
+            "$CREDENTIAL_PATH" \
+            "$GCP_WIF_PROVIDER" \
+            "$GCP_DEPLOY_SERVICE_ACCOUNT" \
+            "$ACTIVE_ACCOUNT" \
+            "$ACTIVE_PROJECT" \
+            "$PROJECT_NUMBER" \
+            "$GCP_PROJECT_ID" \
+            "$GITHUB_OUTPUT"
+
       - name: Resolve exact zero-traffic tagged candidate from provider state
         id: candidate
         shell: bash
@@ -236,7 +259,11 @@ jobs:
           if (declaredSource !== expectedSource) throw new Error('candidate runtime source declaration mismatch');
           NODE
 
-          CANDIDATE_URL="${{ steps.candidate.outputs.candidate_url }}"
+          CANDIDATE_URL="$(node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('$SERVICE_JSON','utf8'));const t=(s.status?.traffic||[]).find(x=>x.tag==='$CANDIDATE_TAG');process.stdout.write(String(t?.url||''))")"
+          if ! printf '%s' "$CANDIDATE_URL" | grep -Eq '^https://[a-z0-9][a-z0-9.-]*\.a\.run\.app$'; then
+            echo 'Provider candidate URL readback is malformed.' >&2
+            exit 2
+          fi
           curl --fail --silent --show-error --max-time 5 "$CANDIDATE_URL/api/health" > "$RUNNER_TEMP/adk-proof-health.json"
 
       - name: Mint audience-bound Google ID token and trigger exactly one canary
@@ -269,6 +296,10 @@ jobs:
         env:
           CANDIDATE_URL: ${{ steps.candidate.outputs.candidate_url }}
           CANDIDATE_REVISION: ${{ steps.candidate.outputs.revision_name }}
+          WIF_PRINCIPAL: ${{ steps.wif.outputs.principal }}
+          WIF_PRINCIPAL_SHA256: ${{ steps.wif.outputs.principal_sha256 }}
+          WIF_PROJECT_NUMBER: ${{ steps.wif.outputs.project_number }}
+          WIF_CREDENTIAL_CONFIG_SHA256: ${{ steps.wif.outputs.credential_config_sha256 }}
         run: |
           set -euo pipefail
           node - <<'NODE'
@@ -298,6 +329,22 @@ jobs:
           }
           if (authority.sourceRevision !== process.env.EXPECTED_SOURCE_REVISION) throw new Error('ADK authority source mismatch');
 
+          const wifCredential = {
+            principal: process.env.WIF_PRINCIPAL,
+            principalSha256: process.env.WIF_PRINCIPAL_SHA256,
+            projectNumber: process.env.WIF_PROJECT_NUMBER,
+            credentialConfigSha256: process.env.WIF_CREDENTIAL_CONFIG_SHA256,
+          };
+          const providerProjectNumber = /^projects\/([1-9][0-9]*)\//.exec(process.env.GCP_WIF_PROVIDER || '')?.[1] || '';
+          if (
+            wifCredential.principal !== process.env.GCP_DEPLOY_SERVICE_ACCOUNT ||
+            !/^[0-9a-f]{64}$/.test(String(wifCredential.principalSha256 || '')) ||
+            wifCredential.projectNumber !== providerProjectNumber ||
+            !/^[0-9a-f]{64}$/.test(String(wifCredential.credentialConfigSha256 || ''))
+          ) {
+            throw new Error('ADK WIF credential evidence is missing or contradicts the approved federation');
+          }
+
           const body = {
             schemaVersion: 'prooffleet.adk-wif-canary.v1',
             outcome: 'OBSERVED',
@@ -314,6 +361,7 @@ jobs:
             candidateRevision: process.env.CANDIDATE_REVISION,
             candidateUrlSha256: createHash('sha256').update(process.env.CANDIDATE_URL).digest('hex'),
             authority,
+            wifCredential,
             adkCanaryReceipt: receipt,
             observedAt: new Date().toISOString(),
           };
@@ -321,6 +369,13 @@ jobs:
           fs.writeFileSync('gcp-adk-canary-receipt.json', JSON.stringify(body, null, 2) + '\n');
           NODE
 
+      - name: Verify ADK canary receipt integrity before upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-adk-canary-receipt.mjs \
+            gcp-adk-canary-receipt.json \
+            "$EXPECTED_SOURCE_REVISION"
       - name: Upload ADK canary proof receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

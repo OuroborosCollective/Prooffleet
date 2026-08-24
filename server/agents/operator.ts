@@ -11,6 +11,7 @@ import type {
   EvidenceSourceKind,
 } from '../../src/types/index';
 import { createFirestoreOperatorExecutor } from '../ops/firestoreEffect';
+import type { GrantValidator } from '../ops/operationExecutor';
 import { AgentContext, AgentOutput, FleetAgent } from './base';
 
 export interface OperatorExecutionResult {
@@ -37,7 +38,10 @@ function assertionFor(result: OperatorExecutionResult): EvidenceAssertion {
   return 'UNAVAILABLE';
 }
 
-export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
+export function createOperatorAgent(
+  executor?: OperatorExecutor,
+  grantValidator?: GrantValidator,
+): FleetAgent {
   const agent: FleetAgent = {
     role: 'operator',
     permissions: ['read', 'write', 'execute'],
@@ -81,7 +85,7 @@ export function createOperatorAgent(executor?: OperatorExecutor): FleetAgent {
       }
 
       const effectiveExecutor =
-        executor ?? (await createFirestoreOperatorExecutor(process.env));
+        executor ?? (await createFirestoreOperatorExecutor(process.env, grantValidator));
 
       if (!effectiveExecutor) {
         const evidenceId = ctx.emitEvidence('operation not executed', 'operation_status', {
