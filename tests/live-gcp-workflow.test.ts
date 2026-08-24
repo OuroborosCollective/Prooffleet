@@ -39,7 +39,7 @@ describe('Live GCP proof workflow safety', () => {
 
   it('uses OIDC/WIF instead of long-lived service-account key JSON', () => {
     expect(workflow).toContain('id-token: write');
-    expect(workflow).toContain('google-github-actions/auth@v3');
+    expect(workflow).toContain('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3');
     expect(workflow).toContain('workload_identity_provider:');
     expect(workflow).toContain('service_account:');
     expect(workflow).toContain('create_credentials_file: true');
@@ -49,7 +49,7 @@ describe('Live GCP proof workflow safety', () => {
   });
 
   it('uses a Node-24-ready setup action while keeping application execution on Node 22', () => {
-    expect(workflow).toContain('uses: actions/setup-node@v7');
+    expect(workflow).toContain('uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7');
     expect(workflow).toContain('node-version: 22');
     expect(workflow).not.toContain('actions/setup-node@v4');
   });
