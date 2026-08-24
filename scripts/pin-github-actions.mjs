@@ -4,15 +4,15 @@ import { join, relative } from 'node:path';
 const ROOT = process.cwd();
 const ONE_SHOT_WORKFLOW = '.github/workflows/pin-actions-once.yml';
 const PINS = new Map([
-  ['actions/checkout@v4', 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'],
-  ['actions/checkout@v7', 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'],
-  ['actions/setup-node@v7', 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020'],
-  ['actions/upload-artifact@v4', 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'],
-  ['google-github-actions/auth@v3', 'google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093'],
-  ['google-github-actions/setup-gcloud@v3', 'google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db'],
-  ['docker/login-action@v3', 'docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9'],
-  ['docker/setup-buildx-action@v3', 'docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f'],
-  ['docker/build-push-action@v6', 'docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83'],
+  ['actions/checkout@v4', 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4'],
+  ['actions/checkout@v7', 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7'],
+  ['actions/setup-node@v7', 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7'],
+  ['actions/upload-artifact@v4', 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4'],
+  ['google-github-actions/auth@v3', 'google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3'],
+  ['google-github-actions/setup-gcloud@v3', 'google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3'],
+  ['docker/login-action@v3', 'docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3'],
+  ['docker/setup-buildx-action@v3', 'docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3'],
+  ['docker/build-push-action@v6', 'docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6'],
 ]);
 
 function walk(directory) {
