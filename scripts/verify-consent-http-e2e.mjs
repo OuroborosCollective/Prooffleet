@@ -133,6 +133,30 @@ async function main() {
   try {
     await waitForHealth(() => logs);
 
+    const unavailableJudge = await fetchJson('/api/judge/evaluate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ claim: 'mission finalized' }),
+    });
+    if (
+      unavailableJudge.response.status !== 409 ||
+      unavailableJudge.body?.error !== 'canonical final verdict unavailable'
+    ) {
+      throw new Error(`judge without a finalized mission expected 409, got ${unavailableJudge.response.status}: ${JSON.stringify(unavailableJudge.body)}`);
+    }
+
+    const unsupportedJudge = await fetchJson('/api/judge/evaluate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ claim: 'operation executed via executor' }),
+    });
+    if (
+      unsupportedJudge.response.status !== 400 ||
+      unsupportedJudge.body?.error !== 'canonical final verdict only'
+    ) {
+      throw new Error(`generic public judge claim expected 400, got ${unsupportedJudge.response.status}: ${JSON.stringify(unsupportedJudge.body)}`);
+    }
+
     const anonymousSession = await fetchJson('/api/operator/session');
     if (
       !anonymousSession.response.ok ||
@@ -330,6 +354,24 @@ async function main() {
     const approvedVerdict = approved.body?.mission?.finalVerdict?.judgeVerdict?.verdict;
     if (approvedVerdict !== 'BLOCKED_BY_MISSING_EVIDENCE') {
       throw new Error(`approval without Firestore readback must stay BLOCKED_BY_MISSING_EVIDENCE, got ${approvedVerdict}`);
+    }
+
+    const canonicalJudge = await fetchJson('/api/judge/evaluate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        claim: 'mission finalized',
+        requirements: [],
+      }),
+    });
+    if (
+      !canonicalJudge.response.ok ||
+      canonicalJudge.body?.verdict?.verdict !== 'BLOCKED_BY_MISSING_EVIDENCE'
+    ) {
+      throw new Error(`public judge must return the canonical blocked verdict, got ${canonicalJudge.response.status}: ${JSON.stringify(canonicalJudge.body)}`);
+    }
+    if (canonicalJudge.body?.verdict?.verdict === 'VERIFIED') {
+      throw new Error('public judge bypassed missing external-effect evidence with an empty requirements array');
     }
 
     const active = await fetchJson('/api/fleet/active-mission');

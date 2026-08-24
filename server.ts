@@ -3,7 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { FLEET_AGENTS } from "./server/contracts";
 import { fleetRunner } from "./server/fleetRunner";
-import { Judge, IndependentVerifier } from "./server/evidence/index";
+import { IndependentVerifier } from "./server/evidence/index";
 import {
   createUnconfiguredAgentSearchEvidenceProvider,
   groundingStatusSnapshot,
@@ -275,18 +275,23 @@ async function startServer() {
     });
   });
 
-  // Judge: read-only evaluation of a claim against real evidence + receipts
+  // Canonical final judgment is calculated only by FleetRunner, which owns the
+  // mission-scoped evidence snapshot and its server-derived proof requirements.
+  // A public read endpoint must never re-judge a global ledger with an empty
+  // requirement list: that would let hash-valid trace evidence outstate a
+  // blocked external effect.
   app.post("/api/judge/evaluate", (req, res) => {
     const { claim } = req.body ?? {};
-    if (typeof claim !== "string" || claim.length === 0) {
-      return res.status(400).json({ error: "claim (string) required" });
+    if (claim !== "mission finalized") {
+      return res.status(400).json({ error: "canonical final verdict only" });
     }
-    const verdict = Judge.judge(
-      claim,
-      fleetRunner.getLedger().getChain(),
-      fleetRunner.getReceiptChain().exportReceipts()
-    );
-    res.json({ verdict });
+
+    const mission = fleetRunner.getActiveMission();
+    if (!mission?.finalVerdict) {
+      return res.status(409).json({ error: "canonical final verdict unavailable" });
+    }
+
+    res.json({ verdict: mission.finalVerdict.judgeVerdict });
   });
 
   // GCP Integration Status — honest provisioning status, no simulation

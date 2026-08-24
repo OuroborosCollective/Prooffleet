@@ -62,3 +62,5 @@ from passing baseline tests so a static test never becomes an external-runtime c
 | WIF symmetry | Candidate captures credential configuration evidence more strongly than ADK and promotion. | In progress; no provider claim until a matching WIF readback exists. |
 | Promotion causality | Promotion did not consume the candidate/ADK artifacts it depended on. | In progress; do not treat a promotion as artifact-bound before a matching receipt chain exists. |
 | ADK cluster uniqueness | The bounded canary is per process, not yet a cluster-wide durable effect. | Documented for a separate provider-backed target; no false `OBSERVED` upgrade. |
+
+| Public Judge API | A public ad-hoc `Judge.judge(...)` call could omit server-owned proof requirements and outstate a blocked final mission. | Closed: only the already mission-scoped canonical final verdict is readable; no generic HTTP re-judging. | Covered by production HTTP negative regression. |
