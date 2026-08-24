@@ -197,7 +197,7 @@ export class FleetRunner {
         `Operator consent APPROVED by ${grant.operatorIdentity} — resuming mission.`,
         { requestId: grant.requestId, operationHash: grant.operationHash });
 
-      const operator = createOperatorAgent();
+      const operator = createOperatorAgent(undefined, this.consentEngine);
       const sharedMemory = this.memoryStoreFor("operator");
       sharedMemory.set("approvedConsent", grant);
       sharedMemory.set("pendingOperationSpec", request.spec);

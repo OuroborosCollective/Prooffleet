@@ -135,11 +135,14 @@ export class FirestoreOperatorExecutor implements OperatorExecutor {
   constructor(
     store: FirestoreEffectStore,
     sourceRevision: string,
-    grantValidator?: GrantValidator,
+    grantValidator: GrantValidator,
   ) {
     const exactRevision = normalizeExactGitRevision(sourceRevision);
     if (!exactRevision) throw new Error('exact lowercase 40-character Git source revision required');
-    this.core = new OperationExecutor(grantValidator ? { grantValidator } : {});
+    if (!grantValidator) {
+      throw new Error('issued ConsentEngine validator required for Firestore effect execution');
+    }
+    this.core = new OperationExecutor({ grantValidator });
     this.handler = new FirestoreEffectHandler(store, exactRevision);
   }
 
@@ -218,7 +221,7 @@ export async function createFirestoreOperatorExecutor(
   grantValidator?: GrantValidator,
 ): Promise<FirestoreOperatorExecutor | undefined> {
   const sourceRevision = normalizeExactGitRevision(env.PROOFFLEET_SOURCE_REVISION);
-  if (!sourceRevision) return undefined;
+  if (!sourceRevision || !grantValidator) return undefined;
 
   const store = await createRealFirestoreEffectStore(env);
   if (!store) return undefined;

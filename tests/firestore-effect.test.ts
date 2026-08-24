@@ -65,8 +65,7 @@ function spec(operationId = 'op-proof-1', sourceRevision = REV_A): OperationSpec
   };
 }
 
-function grantFor(operation: OperationSpec) {
-  const consent = new ConsentEngine();
+function grantFor(consent: ConsentEngine, operation: OperationSpec) {
   const request = consent.createRequest(operation, 'HIGH', 'test');
   const grant = consent.respond(request.requestId, 'APPROVED', 'owner', 'approved');
   if (!grant) throw new Error('expected grant');
@@ -76,9 +75,10 @@ function grantFor(operation: OperationSpec) {
 describe('Firestore proof effect', () => {
   it('applies once and returns authoritative Firestore readback evidence', async () => {
     const store = new MemoryStore();
+    const consent = new ConsentEngine();
     const operation = spec('op-first');
-    const executor = new FirestoreOperatorExecutor(store, REV_A);
-    const result = await executor.execute(operation, grantFor(operation));
+    const executor = new FirestoreOperatorExecutor(store, REV_A, consent);
+    const result = await executor.execute(operation, grantFor(consent, operation));
     expect(result.status).toBe('applied');
     expect(result.sourceKind).toBe('FIRESTORE_READBACK');
     expect(result.sourceRevision).toBe(REV_A);
@@ -87,17 +87,19 @@ describe('Firestore proof effect', () => {
 
   it('treats an exact existing effect as already_applied and does not write again', async () => {
     const store = new MemoryStore();
+    const consent = new ConsentEngine();
     const operation = spec('op-existing');
     const handler = new FirestoreEffectHandler(store, REV_A);
     await handler.apply(operation);
-    const executor = new FirestoreOperatorExecutor(store, REV_A);
-    const result = await executor.execute(operation, grantFor(operation));
+    const executor = new FirestoreOperatorExecutor(store, REV_A, consent);
+    const result = await executor.execute(operation, grantFor(consent, operation));
     expect(result.status).toBe('already_applied');
     expect(store.createCalls).toBe(1);
   });
 
   it('fails closed when the same operationId already contains a different identity', async () => {
     const store = new MemoryStore();
+    const consent = new ConsentEngine();
     const operation = spec('op-conflict');
     store.seed(operation.operationId, {
       schemaVersion: 'prooffleet.firestore-effect.v1',
@@ -109,8 +111,8 @@ describe('Firestore proof effect', () => {
       parametersHash: 'different-parameters-hash',
       sourceRevision: REV_A,
     });
-    const executor = new FirestoreOperatorExecutor(store, REV_A);
-    const result = await executor.execute(operation, grantFor(operation));
+    const executor = new FirestoreOperatorExecutor(store, REV_A, consent);
+    const result = await executor.execute(operation, grantFor(consent, operation));
     expect(result.status).toBe('failed');
     expect(result.detail).toContain('readback conflict');
     expect(store.createCalls).toBe(0);
@@ -118,10 +120,11 @@ describe('Firestore proof effect', () => {
 
   it('treats an atomic create race won by the same identity as already_applied', async () => {
     const store = new RacingStore('same');
+    const consent = new ConsentEngine();
     const operation = spec('op-race-same');
-    const executor = new FirestoreOperatorExecutor(store, REV_A);
+    const executor = new FirestoreOperatorExecutor(store, REV_A, consent);
 
-    const result = await executor.execute(operation, grantFor(operation));
+    const result = await executor.execute(operation, grantFor(consent, operation));
 
     expect(result.status).toBe('already_applied');
     expect(result.sourceKind).toBe('FIRESTORE_READBACK');
@@ -132,10 +135,11 @@ describe('Firestore proof effect', () => {
 
   it('never overwrites an atomic create race won by a conflicting identity', async () => {
     const store = new RacingStore('conflict');
+    const consent = new ConsentEngine();
     const operation = spec('op-race-conflict');
-    const executor = new FirestoreOperatorExecutor(store, REV_A);
+    const executor = new FirestoreOperatorExecutor(store, REV_A, consent);
 
-    const result = await executor.execute(operation, grantFor(operation));
+    const result = await executor.execute(operation, grantFor(consent, operation));
     const surviving = await store.get(operation.operationId);
 
     expect(result.status).toBe('failed');
@@ -147,20 +151,37 @@ describe('Firestore proof effect', () => {
 
   it('never writes when parametersHash does not match canonical parameters', async () => {
     const store = new MemoryStore();
+    const consent = new ConsentEngine();
     const operation = { ...spec('op-bad-hash'), parametersHash: '0'.repeat(64) };
-    const executor = new FirestoreOperatorExecutor(store, REV_A);
-    const result = await executor.execute(operation, grantFor(operation));
+    const executor = new FirestoreOperatorExecutor(store, REV_A, consent);
+    const result = await executor.execute(operation, grantFor(consent, operation));
     expect(result.status).toBe('failed');
     expect(store.createCalls).toBe(0);
   });
 
   it('rejects an operation spec bound to a different source revision before write', async () => {
     const store = new MemoryStore();
+    const consent = new ConsentEngine();
     const operation = spec('op-revision-mismatch', REV_A);
-    const executor = new FirestoreOperatorExecutor(store, REV_B);
-    const result = await executor.execute(operation, grantFor(operation));
+    const executor = new FirestoreOperatorExecutor(store, REV_B, consent);
+    const result = await executor.execute(operation, grantFor(consent, operation));
     expect(result.status).toBe('failed');
     expect(result.detail).toContain('readback failed');
+    expect(store.createCalls).toBe(0);
+  });
+
+  it('blocks a shape-valid forged grant at the real Firestore executor boundary', async () => {
+    const store = new MemoryStore();
+    const consent = new ConsentEngine();
+    const operation = spec('op-forged-grant');
+    const issued = grantFor(consent, operation);
+    const forged = { ...issued, requestId: 'forged-request-id' };
+    const executor = new FirestoreOperatorExecutor(store, REV_A, consent);
+
+    const result = await executor.execute(operation, forged);
+
+    expect(result.status).toBe('blocked_consent_required');
+    expect(result.detail).toContain('requestId was not issued');
     expect(store.createCalls).toBe(0);
   });
 
@@ -175,6 +196,12 @@ describe('Firestore proof effect', () => {
       GCP_PROJECT_ID: 'project-test',
       PROOFFLEET_FIRESTORE_COLLECTION: 'proof-effects',
       PROOFFLEET_SOURCE_REVISION: 'not-a-git-sha',
+    })).toBeUndefined();
+
+    expect(await createFirestoreOperatorExecutor({
+      GCP_PROJECT_ID: 'project-test',
+      PROOFFLEET_FIRESTORE_COLLECTION: 'proof-effects',
+      PROOFFLEET_SOURCE_REVISION: REV_A,
     })).toBeUndefined();
   });
 });

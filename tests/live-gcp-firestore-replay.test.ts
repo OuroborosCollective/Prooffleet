@@ -64,7 +64,7 @@ function grantFor(operation: OperationSpec) {
   const request = consent.createRequest(operation, "HIGH", "semantic replay regression");
   const grant = consent.respond(request.requestId, "APPROVED", "owner", "exact operation approved");
   if (!grant) throw new Error("expected consent grant");
-  return grant;
+  return { consent, grant };
 }
 
 describe("Live GCP Firestore semantic replay boundary", () => {
@@ -77,10 +77,12 @@ describe("Live GCP Firestore semantic replay boundary", () => {
     expect(first.operation.operationId).toBe(redelivery.operation.operationId);
     expect(first.operation.parametersHash).toBe(redelivery.operation.parametersHash);
 
-    const firstResult = await new FirestoreOperatorExecutor(store, SOURCE)
-      .execute(first.operation, grantFor(first.operation));
-    const redeliveryResult = await new FirestoreOperatorExecutor(store, SOURCE)
-      .execute(redelivery.operation, grantFor(redelivery.operation));
+    const firstGrant = grantFor(first.operation);
+    const redeliveryGrant = grantFor(redelivery.operation);
+    const firstResult = await new FirestoreOperatorExecutor(store, SOURCE, firstGrant.consent)
+      .execute(first.operation, firstGrant.grant);
+    const redeliveryResult = await new FirestoreOperatorExecutor(store, SOURCE, redeliveryGrant.consent)
+      .execute(redelivery.operation, redeliveryGrant.grant);
 
     expect(firstResult.status).toBe("applied");
     expect(redeliveryResult.status).toBe("already_applied");
