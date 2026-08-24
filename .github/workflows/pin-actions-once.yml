@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   pin-reviewed-action-commits:
-    if: github.actor_id == '266194342' && github.repository_id == '1339097875'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
