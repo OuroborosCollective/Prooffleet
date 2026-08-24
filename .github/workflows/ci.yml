@@ -196,7 +196,7 @@ jobs:
         shell: bash
         env:
           CI_ARTIFACT_ID: ${{ steps.upload_runtime_evidence.outputs.artifact-id }}
-          CI_ARTIFACT_DIGEST: ${{ steps.upload_runtime_evidence.outputs.artifact-digest }}
+          CI_ARTIFACT_DIGEST: sha256:${{ steps.upload_runtime_evidence.outputs.artifact-digest }}
           CI_ARTIFACT_NAME: prooffleet-ci-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail

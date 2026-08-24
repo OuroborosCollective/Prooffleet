@@ -31,6 +31,7 @@ describe('CI evidence identity workflow contract', () => {
     expect(workflow).toContain('ci-runtime-health.json');
     expect(workflow).toContain('steps.upload_runtime_evidence.outputs.artifact-id');
     expect(workflow).toContain('steps.upload_runtime_evidence.outputs.artifact-digest');
+    expect(workflow).toMatch(/CI_ARTIFACT_DIGEST:\s+sha256:\$\{\{\s+steps\.upload_runtime_evidence\.outputs\.artifact-digest\s+\}\}/);
     expect(workflow).toContain('node scripts/ci-artifact-binding.mjs');
     expect(workflow).toContain(BINDING_ARTIFACT_NAME);
     expect(workflow.indexOf('id: upload_runtime_evidence')).toBeLessThan(workflow.indexOf('node scripts/ci-artifact-binding.mjs'));
