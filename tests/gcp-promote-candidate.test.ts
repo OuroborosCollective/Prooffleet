@@ -42,6 +42,19 @@ describe('GCP candidate promotion safety contract', () => {
     expect(workflow).not.toContain('GOOGLE_APPLICATION_CREDENTIALS=');
   });
 
+  it('requires actual WIF principal, project number and credential configuration before promotion preflight', () => {
+    const authenticate = workflow.indexOf('Authenticate to Google Cloud using WIF');
+    const wif = workflow.indexOf('Prove promotion WIF principal, project and credential configuration');
+    const preflight = workflow.indexOf('Preflight exact zero-traffic candidate from provider state');
+    expect(authenticate).toBeGreaterThan(-1);
+    expect(wif).toBeGreaterThan(authenticate);
+    expect(preflight).toBeGreaterThan(wif);
+    expect(workflow).toContain('gcloud projects describe "$GCP_PROJECT_ID"');
+    expect(workflow).toContain('node scripts/verify-wif-identity.mjs');
+    expect(workflow).toContain('WIF_CREDENTIAL_CONFIG_SHA256: ${{ steps.wif.outputs.credential_config_sha256 }}');
+    expect(workflow).toContain('wifCredential,');
+  });
+
   it('requires the exact source-derived candidate tag to still be at zero normal traffic', () => {
     expect(workflow).toContain('CANDIDATE_TAG="pf-${EXPECTED_SOURCE_REVISION:0:12}"');
     expect(workflow).toContain('expected exactly one candidate tag ${candidateTag}');

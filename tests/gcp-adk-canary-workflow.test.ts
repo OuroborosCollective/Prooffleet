@@ -27,6 +27,19 @@ describe('GCP ADK canary workflow safety contract', () => {
     expect(candidate).not.toContain(ownCandidateOutput);
   });
 
+  it('requires actual WIF principal, project number and secret-free credential configuration before provider readback', () => {
+    const authenticate = workflow.indexOf('Authenticate to Google Cloud using existing deploy WIF');
+    const wif = workflow.indexOf('Prove ADK WIF principal, project and credential configuration');
+    const candidate = workflow.indexOf('Resolve exact zero-traffic tagged candidate from provider state');
+    expect(authenticate).toBeGreaterThan(-1);
+    expect(wif).toBeGreaterThan(authenticate);
+    expect(candidate).toBeGreaterThan(wif);
+    expect(workflow).toContain('gcloud projects describe "$GCP_PROJECT_ID"');
+    expect(workflow).toContain('node scripts/verify-wif-identity.mjs');
+    expect(workflow).toContain('WIF_CREDENTIAL_CONFIG_SHA256: ${{ steps.wif.outputs.credential_config_sha256 }}');
+    expect(workflow).toContain('wifCredential,');
+  });
+
   it('fails closed on a mutated or wrong-source receipt before artifact upload', () => {
     const observed = workflow.indexOf('Require source-bound observed ADK Gemini receipt');
     const integrity = workflow.indexOf('Verify ADK canary receipt integrity before upload');
