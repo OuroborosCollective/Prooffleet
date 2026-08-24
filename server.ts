@@ -275,6 +275,7 @@ async function startServer() {
     });
   });
 
+  // Judge: read-only evaluation of a FleetRunner-owned canonical final verdict.
   // Canonical final judgment is calculated only by FleetRunner, which owns the
   // mission-scoped evidence snapshot and its server-derived proof requirements.
   // A public read endpoint must never re-judge a global ledger with an empty
