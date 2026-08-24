@@ -120,24 +120,27 @@ export function buildLiveGcpProofPlan(env: NodeJS.ProcessEnv): LiveGcpProofPlan 
 
   const executionIdentity = buildCheckedSourceExecutionIdentity(env, sourceRevision);
 
-  // Effect identity is intentionally stable across GitHub re-run attempts. A run
-  // attempt is execution evidence, not new user intent. Keeping attempt-specific
-  // fields out of the OperationSpec preserves readback-before-retry/idempotency,
-  // while the receipt still records the full attempt-specific execution identity.
+  // Effect identity is semantic: a fresh GitHub run is execution evidence, not
+  // a fresh Firestore write intent. Run and attempt remain in executionIdentity
+  // (and therefore in the receipt), while one source/target/authority operation
+  // deterministically resolves to one create-only document.
+  const actionName = 'record_live_gcp_proof';
+  const targetResource = `firestore:${collection}`;
   const parameters = {
     proofKind: 'live_firestore_effect',
     sourceRevision,
     repositoryId: executionIdentity.repositoryId,
     repositoryOwnerId: executionIdentity.repositoryOwnerId,
     actorId: executionIdentity.actorId,
-    workflowRunId: executionIdentity.workflowRunId,
     gcpProjectNumber,
     observedWifPrincipal,
   };
   const parametersHash = sha256Hex(canonicalJson(parameters));
-  const missionId = `gcp-live-${executionIdentity.workflowRunId}`;
-  const actionName = 'record_live_gcp_proof';
-  const targetResource = `firestore:${collection}`;
+  const missionId = `gcp-live-${sha256Hex(canonicalJson({
+    actionName,
+    targetResource,
+    parametersHash,
+  })).slice(0, 24)}`;
   const operationId = `gcp-${sha256Hex(
     canonicalJson({
       missionId,

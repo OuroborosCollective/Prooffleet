@@ -34,7 +34,7 @@ function env(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 describe('Live GCP proof plan', () => {
-  it('binds effect identity to exact source, repository, owner, actor, workflow run and authenticated GCP identity', () => {
+  it('binds semantic effect identity to exact source, repository, owner, actor, target and authenticated GCP identity', () => {
     const plan = buildLiveGcpProofPlan(env());
 
     expect(plan.operation.parameters).toMatchObject({
@@ -42,10 +42,10 @@ describe('Live GCP proof plan', () => {
       repositoryId: '1339097875',
       repositoryOwnerId: '266194342',
       actorId: '266194342',
-      workflowRunId: '12345',
       gcpProjectNumber: PROJECT_NUMBER,
       observedWifPrincipal: WIF_SERVICE_ACCOUNT,
     });
+    expect(plan.operation.parameters).not.toHaveProperty('workflowRunId');
     expect(plan.operation.parameters).not.toHaveProperty('workflowRunAttempt');
     expect(plan.operation.parameters).not.toHaveProperty('executionIdentityHash');
     expect(plan.operation.parameters).not.toHaveProperty('workflowContextSha');
@@ -57,16 +57,16 @@ describe('Live GCP proof plan', () => {
     expect(plan.operation.targetResource).toBe('firestore:proof-effects');
   });
 
-  it('keeps Firestore effect identity stable across GitHub re-runs while execution evidence remains attempt-specific', () => {
+  it('keeps one Firestore effect across a fresh GitHub run while execution evidence remains run-specific', () => {
     const first = buildLiveGcpProofPlan(env());
-    const rerun = buildLiveGcpProofPlan(env({ GITHUB_RUN_ATTEMPT: '2' }));
+    const redelivery = buildLiveGcpProofPlan(env({ GITHUB_RUN_ID: '67890', GITHUB_RUN_ATTEMPT: '1' }));
 
-    expect(first.executionIdentity.workflowRunAttempt).toBe('1');
-    expect(rerun.executionIdentity.workflowRunAttempt).toBe('2');
-    expect(first.executionIdentity.identityHash).not.toBe(rerun.executionIdentity.identityHash);
-    expect(first.operation.operationId).toBe(rerun.operation.operationId);
-    expect(first.operation.parametersHash).toBe(rerun.operation.parametersHash);
-    expect(first.operation.missionId).toBe(rerun.operation.missionId);
+    expect(first.executionIdentity.workflowRunId).toBe('12345');
+    expect(redelivery.executionIdentity.workflowRunId).toBe('67890');
+    expect(first.executionIdentity.identityHash).not.toBe(redelivery.executionIdentity.identityHash);
+    expect(first.operation.operationId).toBe(redelivery.operation.operationId);
+    expect(first.operation.parametersHash).toBe(redelivery.operation.parametersHash);
+    expect(first.operation.missionId).toBe(redelivery.operation.missionId);
   });
 
   it('binds a synthetic pull-request merge SHA as workflow context without confusing it with the checked source', () => {
@@ -91,6 +91,20 @@ describe('Live GCP proof plan', () => {
     const actorChanged = buildLiveGcpProofPlan(env({ GITHUB_ACTOR_ID: '266194343' }));
     expect(first.operation.operationId).not.toBe(ownerChanged.operation.operationId);
     expect(first.operation.operationId).not.toBe(actorChanged.operation.operationId);
+  });
+
+  it('blocks semantic replay substitution by deriving a different operation for a different source or target', () => {
+    const first = buildLiveGcpProofPlan(env());
+    const sourceChanged = buildLiveGcpProofPlan(env({
+      PROOFFLEET_SOURCE_REVISION: 'c'.repeat(40),
+      GITHUB_SHA: 'c'.repeat(40),
+    }));
+    const targetChanged = buildLiveGcpProofPlan(env({ PROOFFLEET_FIRESTORE_COLLECTION: 'other-proof-effects' }));
+
+    expect(first.operation.operationId).not.toBe(sourceChanged.operation.operationId);
+    expect(first.operation.operationId).not.toBe(targetChanged.operation.operationId);
+    expect(first.operation.parametersHash).not.toBe(sourceChanged.operation.parametersHash);
+    expect(first.operation.targetResource).not.toBe(targetChanged.operation.targetResource);
   });
 
   it('does not authorize a mutation without the exact workflow-dispatch phrase', () => {
