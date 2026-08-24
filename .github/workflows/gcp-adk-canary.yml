@@ -236,7 +236,11 @@ jobs:
           if (declaredSource !== expectedSource) throw new Error('candidate runtime source declaration mismatch');
           NODE
 
-          CANDIDATE_URL="${{ steps.candidate.outputs.candidate_url }}"
+          CANDIDATE_URL="$(node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('$SERVICE_JSON','utf8'));const t=(s.status?.traffic||[]).find(x=>x.tag==='$CANDIDATE_TAG');process.stdout.write(String(t?.url||''))")"
+          if ! printf '%s' "$CANDIDATE_URL" | grep -Eq '^https://[a-z0-9][a-z0-9.-]*\.a\.run\.app$'; then
+            echo 'Provider candidate URL readback is malformed.' >&2
+            exit 2
+          fi
           curl --fail --silent --show-error --max-time 5 "$CANDIDATE_URL/api/health" > "$RUNNER_TEMP/adk-proof-health.json"
 
       - name: Mint audience-bound Google ID token and trigger exactly one canary
@@ -321,6 +325,13 @@ jobs:
           fs.writeFileSync('gcp-adk-canary-receipt.json', JSON.stringify(body, null, 2) + '\n');
           NODE
 
+      - name: Verify ADK canary receipt integrity before upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-adk-canary-receipt.mjs \
+            gcp-adk-canary-receipt.json \
+            "$EXPECTED_SOURCE_REVISION"
       - name: Upload ADK canary proof receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
