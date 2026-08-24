@@ -63,7 +63,7 @@ jobs:
 
     steps:
       - name: Checkout exact source revision
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.PROOFFLEET_SOURCE_REVISION }}
           persist-credentials: false
@@ -176,7 +176,7 @@ jobs:
           fi
 
       - name: Authenticate to Google Cloud with Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
@@ -185,7 +185,7 @@ jobs:
           export_environment_variables: true
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
@@ -218,7 +218,7 @@ jobs:
           echo '[wif-evidence] active credential principal and project identity observed through authenticated gcloud readback'
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -244,7 +244,7 @@ jobs:
 
       - name: Upload live proof receipt
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: prooffleet-gcp-live-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.PROOFFLEET_SOURCE_REVISION }}
           path: gcp-live-proof-receipt.json

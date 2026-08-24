@@ -28,7 +28,7 @@ describe('GCP candidate deployment target binding', () => {
   });
 
   it('retains WIF-only authentication and zero-traffic deployment semantics', () => {
-    expect(workflow).toContain('google-github-actions/auth@v3');
+    expect(workflow).toContain('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3');
     expect(workflow).toContain('workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}');
     expect(workflow).toContain('service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}');
     expect(workflow).not.toContain('credentials_json');

@@ -36,7 +36,7 @@ describe('GCP candidate promotion safety contract', () => {
   });
 
   it('uses WIF and never accepts a long-lived service-account credential', () => {
-    expect(workflow).toContain('google-github-actions/auth@v3');
+    expect(workflow).toContain('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3');
     expect(workflow).toContain('GCP_DEPLOY_SERVICE_ACCOUNT');
     expect(workflow).not.toContain('credentials_json');
     expect(workflow).not.toContain('GOOGLE_APPLICATION_CREDENTIALS=');

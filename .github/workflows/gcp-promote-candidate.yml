@@ -63,7 +63,7 @@ jobs:
 
     steps:
       - name: Checkout exact source revision
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.EXPECTED_SOURCE_REVISION }}
           persist-credentials: false
@@ -189,7 +189,7 @@ jobs:
           echo "candidate_tag=$CANDIDATE_TAG"
 
       - name: Authenticate to Google Cloud using WIF
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
@@ -198,7 +198,7 @@ jobs:
           export_environment_variables: true
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
@@ -486,7 +486,7 @@ jobs:
           trap - ERR
 
       - name: Upload promotion receipt
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: prooffleet-gcp-promotion-${{ env.EXPECTED_SOURCE_REVISION }}
           path: gcp-promotion-receipt.json

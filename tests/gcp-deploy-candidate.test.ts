@@ -54,7 +54,7 @@ describe('GCP candidate deploy safety contract', () => {
   });
 
   it('uses WIF and never accepts a long-lived service-account JSON credential', () => {
-    expect(workflow).toContain('google-github-actions/auth@v3');
+    expect(workflow).toContain('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3');
     expect(workflow).toContain('GCP_DEPLOY_SERVICE_ACCOUNT');
     expect(workflow).not.toContain('credentials_json');
     expect(workflow).not.toContain('GOOGLE_APPLICATION_CREDENTIALS=');
@@ -69,7 +69,7 @@ describe('GCP candidate deploy safety contract', () => {
   });
 
   it('builds an immutable source-SHA-tagged image and requires a sha256 OCI index digest', () => {
-    expect(workflow).toContain('docker/build-push-action@v6');
+    expect(workflow).toContain('docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6');
     expect(workflow).toContain('push: true');
     expect(workflow).toContain(':${{ env.EXPECTED_SOURCE_REVISION }}');
     expect(workflow).toContain("'^sha256:[0-9a-f]{64}$'");
