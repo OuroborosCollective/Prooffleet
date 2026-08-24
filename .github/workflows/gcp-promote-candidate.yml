@@ -1,0 +1,494 @@
+name: ProofFleet GCP Candidate Promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_revision:
+        description: Exact 40-character source SHA whose observed candidate revision may receive traffic.
+        required: true
+        type: string
+      confirmation:
+        description: Type I_APPROVE_PROOFFLEET_CANDIDATE_PROMOTION to move one verified candidate revision to 100 percent traffic.
+        required: true
+        type: string
+  pull_request:
+    branches:
+      - main
+    types:
+      - labeled
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: prooffleet-gcp-candidate-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote-candidate:
+    name: promote-observed-candidate
+    if: >-
+      (github.event_name == 'workflow_dispatch') ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'proofleet-promote-candidate' &&
+        github.actor == 'OuroborosCollective' &&
+        github.event.pull_request.user.login == 'OuroborosCollective' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      GCP_PROJECT_ID: project-b29d4703-a302-4b05-b2e
+      GCP_REGION: europe-west1
+      GCP_WIF_PROVIDER: projects/511695074775/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo
+      GCP_DEPLOY_SERVICE_ACCOUNT: prooffleet-deploy@project-b29d4703-a302-4b05-b2e.iam.gserviceaccount.com
+      PROOFFLEET_CLOUDRUN_SERVICE: prooffleet
+      PROOFFLEET_ARTIFACT_REPOSITORY: prooffleet
+      EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'
+      EXPECTED_GITHUB_REPOSITORY_OWNER_ID: '266194342'
+      EXPECTED_GITHUB_ACTOR_ID: '266194342'
+      EXPECTED_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.expected_source_revision }}
+      PROMOTION_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
+      EVENT_ACTION: ${{ github.event.action }}
+      EVENT_ACTOR: ${{ github.actor }}
+      PR_LABEL_NAME: ${{ github.event.label.name }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+      PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      PR_HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id }}
+
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.EXPECTED_SOURCE_REVISION }}
+          persist-credentials: false
+
+      - name: Fail closed on stale source or unauthorized promotion trigger
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GCP_WIF_PROVIDER
+            GCP_DEPLOY_SERVICE_ACCOUNT
+            PROOFFLEET_CLOUDRUN_SERVICE
+            PROOFFLEET_ARTIFACT_REPOSITORY
+            EXPECTED_SOURCE_REVISION
+            EXPECTED_GITHUB_REPOSITORY_ID
+            EXPECTED_GITHUB_REPOSITORY_OWNER_ID
+            EXPECTED_GITHUB_ACTOR_ID
+            GITHUB_REPOSITORY_ID
+            GITHUB_REPOSITORY_OWNER_ID
+            GITHUB_ACTOR_ID
+            GITHUB_RUN_ID
+            GITHUB_RUN_ATTEMPT
+          )
+          for key in "${required[@]}"; do
+            if test -z "${!key:-}"; then
+              echo "Missing required promotion value: ${key}" >&2
+              exit 2
+            fi
+          done
+
+          if ! printf '%s' "$EXPECTED_SOURCE_REVISION" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo 'expected source revision must be an exact lowercase 40-character Git SHA.' >&2
+            exit 2
+          fi
+
+          ACTUAL_SOURCE_REVISION="$(git rev-parse HEAD)"
+          if test "$ACTUAL_SOURCE_REVISION" != "$EXPECTED_SOURCE_REVISION"; then
+            echo "Refusing mismatched checkout: expected=$EXPECTED_SOURCE_REVISION actual=$ACTUAL_SOURCE_REVISION" >&2
+            exit 2
+          fi
+
+          for key in \
+            EXPECTED_GITHUB_REPOSITORY_ID EXPECTED_GITHUB_REPOSITORY_OWNER_ID EXPECTED_GITHUB_ACTOR_ID \
+            GITHUB_REPOSITORY_ID GITHUB_REPOSITORY_OWNER_ID GITHUB_ACTOR_ID GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; do
+            if ! printf '%s' "${!key}" | grep -Eq '^[1-9][0-9]*$'; then
+              echo "Immutable GitHub identity ${key} is malformed." >&2
+              exit 2
+            fi
+          done
+          if test "$GITHUB_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+            echo 'GitHub repository ID does not match the approved promotion repository.' >&2
+            exit 2
+          fi
+          if test "$GITHUB_REPOSITORY_OWNER_ID" != "$EXPECTED_GITHUB_REPOSITORY_OWNER_ID"; then
+            echo 'GitHub repository owner ID does not match the approved promotion owner.' >&2
+            exit 2
+          fi
+          if test "$GITHUB_ACTOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+            echo 'GitHub actor ID is not authorized for candidate promotion.' >&2
+            exit 2
+          fi
+          if test "$GITHUB_RUN_ATTEMPT" != '1'; then
+            echo 'Candidate promotion requires a fresh explicit trigger; GitHub re-runs are blocked before WIF authentication.' >&2
+            exit 2
+          fi
+
+          if test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'; then
+            if test "$EXPECTED_SOURCE_REVISION" != "$GITHUB_SHA"; then
+              echo "Refusing stale manual promotion: expected_source_revision=$EXPECTED_SOURCE_REVISION github.sha=$GITHUB_SHA" >&2
+              exit 2
+            fi
+            if test "$PROMOTION_CONFIRMATION" != 'I_APPROVE_PROOFFLEET_CANDIDATE_PROMOTION'; then
+              echo 'Exact candidate-promotion confirmation phrase is required.' >&2
+              exit 2
+            fi
+          elif test "$GITHUB_EVENT_NAME" = 'pull_request'; then
+            for key in EVENT_ACTION EVENT_ACTOR PR_LABEL_NAME PR_AUTHOR PR_AUTHOR_ID PR_HEAD_REPOSITORY PR_HEAD_REPOSITORY_ID; do
+              if test -z "${!key:-}"; then
+                echo "Missing pull-request promotion authority value: ${key}" >&2
+                exit 2
+              fi
+            done
+            if test "$EVENT_ACTION" != 'labeled'; then
+              echo "Candidate promotion only accepts pull_request:labeled, got action=$EVENT_ACTION" >&2
+              exit 2
+            fi
+            if test "$PR_LABEL_NAME" != 'proofleet-promote-candidate'; then
+              echo "Unexpected promotion label: $PR_LABEL_NAME" >&2
+              exit 2
+            fi
+            if test "$EVENT_ACTOR" != 'OuroborosCollective' || test "$PR_AUTHOR" != 'OuroborosCollective'; then
+              echo 'Pre-merge candidate promotion requires owner actor and owner-authored PR.' >&2
+              exit 2
+            fi
+            if test "$PR_AUTHOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+              echo 'Pull-request author ID does not match the approved promotion operator.' >&2
+              exit 2
+            fi
+            if test "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" || test "$PR_HEAD_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+              echo 'Refusing candidate promotion from a foreign or mismatched repository.' >&2
+              exit 2
+            fi
+          else
+            echo "Unsupported promotion event: $GITHUB_EVENT_NAME" >&2
+            exit 2
+          fi
+
+          if ! printf '%s' "$GCP_WIF_PROVIDER" | grep -Eq '^projects/[1-9][0-9]*/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'; then
+            echo 'GCP_WIF_PROVIDER is malformed.' >&2
+            exit 2
+          fi
+          if ! printf '%s' "$GCP_DEPLOY_SERVICE_ACCOUNT" | grep -Eq '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$'; then
+            echo 'GCP_DEPLOY_SERVICE_ACCOUNT is malformed.' >&2
+            exit 2
+          fi
+
+          CANDIDATE_TAG="pf-${EXPECTED_SOURCE_REVISION:0:12}"
+          echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
+          echo "promotion_source_revision=$EXPECTED_SOURCE_REVISION"
+          echo "candidate_tag=$CANDIDATE_TAG"
+
+      - name: Authenticate to Google Cloud using WIF
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Preflight exact zero-traffic candidate from provider state
+        id: preflight
+        shell: bash
+        env:
+          CANDIDATE_TAG: ${{ steps.identity.outputs.candidate_tag }}
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$RUNNER_TEMP/promotion-service-before.json"
+          REVISION_JSON="$RUNNER_TEMP/promotion-revision-before.json"
+
+          gcloud run services describe "$PROOFFLEET_CLOUDRUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$SERVICE_JSON"
+
+          node - "$SERVICE_JSON" "$CANDIDATE_TAG" <<'NODE'
+          const fs = require('fs');
+          const [servicePath, candidateTag] = process.argv.slice(2);
+          const service = JSON.parse(fs.readFileSync(servicePath, 'utf8'));
+          const traffic = Array.isArray(service.status?.traffic) ? service.status.traffic : [];
+          const tagged = traffic.filter((t) => t.tag === candidateTag);
+          if (tagged.length !== 1) throw new Error(`expected exactly one candidate tag ${candidateTag}, got ${tagged.length}`);
+          const revisionName = String(tagged[0].revisionName || '');
+          const candidateUrl = String(tagged[0].url || '');
+          if (!revisionName) throw new Error('candidate tag is not bound to a revision');
+          if (!/^https:\/\//.test(candidateUrl)) throw new Error('candidate tag URL is missing or malformed');
+
+          const candidatePercent = traffic
+            .filter((t) => t.revisionName === revisionName)
+            .reduce((sum, t) => sum + Number(t.percent || 0), 0);
+          if (candidatePercent !== 0) throw new Error(`candidate already receives ${candidatePercent}% normal traffic`);
+
+          const positive = traffic
+            .filter((t) => Number(t.percent || 0) > 0)
+            .map((t) => ({ revisionName: String(t.revisionName || ''), percent: Number(t.percent || 0) }));
+          if (positive.some((t) => !t.revisionName)) throw new Error('existing positive traffic target has no revisionName');
+          const total = positive.reduce((sum, t) => sum + t.percent, 0);
+          if (total !== 100) throw new Error(`existing positive traffic must total 100 before promotion, got ${total}`);
+          const priorSpec = positive.map((t) => `${t.revisionName}=${t.percent}`).join(',');
+          if (!priorSpec) throw new Error('no rollback traffic snapshot available');
+
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/promotion-revision-name.txt', revisionName + '\n');
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/promotion-candidate-url.txt', candidateUrl + '\n');
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/promotion-prior-traffic.txt', priorSpec + '\n');
+          fs.writeFileSync('gcp-promotion-receipt.json', JSON.stringify({
+            schemaVersion: 'prooffleet.gcp-promotion.v1',
+            outcome: 'PREFLIGHT_ONLY',
+            projectId: process.env.GCP_PROJECT_ID,
+            region: process.env.GCP_REGION,
+            service: process.env.PROOFFLEET_CLOUDRUN_SERVICE,
+            sourceRevision: process.env.EXPECTED_SOURCE_REVISION,
+            workflowContextSha: process.env.GITHUB_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            repositoryId: process.env.GITHUB_REPOSITORY_ID,
+            repositoryOwnerId: process.env.GITHUB_REPOSITORY_OWNER_ID,
+            actorId: process.env.GITHUB_ACTOR_ID,
+            candidateTag,
+            revisionName,
+            candidateUrl,
+            priorTraffic: positive,
+            providerReady: false,
+            prePromotionTrafficPercent: null,
+            candidateHttpHealthObserved: false,
+            adkCanaryObserved: false,
+            preflightObservedAt: new Date().toISOString(),
+          }, null, 2) + '\n');
+          NODE
+
+          REVISION="$(cat "$RUNNER_TEMP/promotion-revision-name.txt")"
+          gcloud run revisions describe "$REVISION" \
+            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$REVISION_JSON"
+
+          node - "$SERVICE_JSON" "$REVISION_JSON" "$EXPECTED_SOURCE_REVISION" <<'NODE'
+          const fs = require('fs');
+          const [servicePath, revisionPath, expectedSha] = process.argv.slice(2);
+          const service = JSON.parse(fs.readFileSync(servicePath, 'utf8'));
+          const revision = JSON.parse(fs.readFileSync(revisionPath, 'utf8'));
+          const currentRuntimeSa = String(service.spec?.template?.spec?.serviceAccountName || '');
+          const revisionRuntimeSa = String(revision.spec?.serviceAccountName || revision.spec?.template?.spec?.serviceAccountName || '');
+          if (!currentRuntimeSa || revisionRuntimeSa !== currentRuntimeSa) {
+            throw new Error(`candidate runtime identity mismatch: service=${currentRuntimeSa || '<missing>'} revision=${revisionRuntimeSa || '<missing>'}`);
+          }
+
+          const labels = revision.metadata?.labels || {};
+          if (labels['prooffleet-source-sha'] !== expectedSha) throw new Error('candidate source label does not match requested source SHA');
+          if (String(labels['prooffleet-candidate']) !== 'true') throw new Error('candidate marker label is missing');
+
+          const ready = Array.isArray(revision.status?.conditions)
+            ? revision.status.conditions.some((c) => c.type === 'Ready' && String(c.status).toLowerCase() === 'true')
+            : false;
+          if (!ready) throw new Error('candidate revision is not provider-Ready');
+
+          const container = revision.spec?.containers?.[0] || revision.spec?.template?.spec?.containers?.[0] || {};
+          const env = Array.isArray(container.env) ? container.env : [];
+          const declaredSource = env.find((e) => e.name === 'PROOFFLEET_SOURCE_REVISION')?.value || '';
+          if (declaredSource !== expectedSha) throw new Error(`candidate declared source mismatch: ${declaredSource || '<missing>'}`);
+
+          const expectedImagePrefix = `${process.env.GCP_REGION}-docker.pkg.dev/${process.env.GCP_PROJECT_ID}/${process.env.PROOFFLEET_ARTIFACT_REPOSITORY}/${process.env.PROOFFLEET_CLOUDRUN_SERVICE}@`;
+          const image = String(container.image || '');
+          if (!image.startsWith(expectedImagePrefix)) throw new Error(`candidate image is outside the expected Artifact Registry identity: ${image}`);
+          const digest = image.slice(expectedImagePrefix.length);
+          if (!/^sha256:[0-9a-f]{64}$/.test(digest)) throw new Error(`candidate image is not bound to an immutable sha256 digest: ${image}`);
+
+          const receiptPath = 'gcp-promotion-receipt.json';
+          const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          receipt.imageDigest = digest;
+          receipt.runtimeServiceAccount = revisionRuntimeSa;
+          receipt.providerReady = true;
+          receipt.prePromotionTrafficPercent = 0;
+          fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
+          NODE
+
+          echo "candidate_revision=$(cat "$RUNNER_TEMP/promotion-revision-name.txt")" >> "$GITHUB_OUTPUT"
+
+      - name: Re-smoke exact tagged candidate and require observed ADK canary before traffic mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANDIDATE_URL="$(cat "$RUNNER_TEMP/promotion-candidate-url.txt")"
+          ready=false
+          for _ in $(seq 1 40); do
+            if curl --fail --silent --show-error --max-time 5 \
+              "$CANDIDATE_URL/api/health" > "$RUNNER_TEMP/promotion-candidate-health.json"; then
+              ready=true
+              break
+            fi
+            sleep 0.5
+          done
+          if test "$ready" != true; then
+            echo 'Refusing promotion because tagged candidate did not pass /api/health.' >&2
+            exit 2
+          fi
+
+          curl --fail --silent --show-error --max-time 5 \
+            "$CANDIDATE_URL/api/runtime/adk-canary" > "$RUNNER_TEMP/promotion-adk-canary.json"
+
+          node - "$EXPECTED_SOURCE_REVISION" <<'NODE'
+          const fs = require('fs');
+          const [expectedSha] = process.argv.slice(2);
+          const health = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/promotion-candidate-health.json', 'utf8'));
+          if (!health || typeof health !== 'object' || Array.isArray(health)) {
+            throw new Error('candidate health payload is not a JSON object');
+          }
+
+          const canary = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/promotion-adk-canary.json', 'utf8'));
+          if (!canary || typeof canary !== 'object' || Array.isArray(canary)) {
+            throw new Error('candidate ADK canary payload is not a JSON object');
+          }
+          if (canary.eligible !== true) throw new Error('candidate runtime is not eligible for ADK canary proof');
+          if (canary.sourceRevision !== expectedSha) {
+            throw new Error(`candidate ADK canary source mismatch: expected ${expectedSha}, got ${canary.sourceRevision || '<missing>'}`);
+          }
+          if (canary.status !== 'OBSERVED') {
+            throw new Error(`refusing promotion without observed ADK canary: ${canary.status || '<missing>'}`);
+          }
+
+          const observed = canary.receipt || {};
+          if (observed.outcome !== 'ADK_RUNTIME_OBSERVED') throw new Error('ADK canary outcome mismatch');
+          if (observed.sourceRevision !== expectedSha) throw new Error('ADK canary receipt source mismatch');
+          if (observed.framework !== 'google-adk') throw new Error('ADK canary framework mismatch');
+          if (observed.modelId !== 'gemini-3.7-flash') throw new Error('ADK canary model mismatch');
+          if (observed.challengeMatched !== true || observed.finalResponseObserved !== true) {
+            throw new Error('ADK canary challenge was not authoritatively observed');
+          }
+          if (!/^[0-9a-f]{64}$/.test(String(observed.challengeSha256 || ''))) {
+            throw new Error('ADK canary challenge hash is malformed');
+          }
+          if (!/^[0-9a-f]{64}$/.test(String(observed.responseSha256 || ''))) {
+            throw new Error('ADK canary response hash is malformed');
+          }
+          if (observed.challengeSha256 !== observed.responseSha256) {
+            throw new Error('ADK canary challenge and response hashes differ');
+          }
+          if (!observed.observedAt || Number.isNaN(Date.parse(observed.observedAt))) {
+            throw new Error('ADK canary observation timestamp is missing or malformed');
+          }
+
+          const receiptPath = 'gcp-promotion-receipt.json';
+          const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          receipt.candidateHttpHealthObserved = true;
+          receipt.candidateHealthEndpoint = '/api/health';
+          receipt.adkCanaryObserved = true;
+          receipt.adkCanaryEndpoint = '/api/runtime/adk-canary';
+          receipt.adkCanaryReceipt = observed;
+          receipt.adkCanaryReadbackObservedAt = new Date().toISOString();
+          fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
+          console.log('[promotion-preflight] tagged candidate health and exact source-bound ADK canary observed');
+          NODE
+
+      - name: Promote exact revision with automatic rollback on failed post-readback
+        shell: bash
+        env:
+          CANDIDATE_REVISION: ${{ steps.preflight.outputs.candidate_revision }}
+        run: |
+          set -euo pipefail
+          PREVIOUS_TRAFFIC="$(cat "$RUNNER_TEMP/promotion-prior-traffic.txt")"
+          if test -z "$PREVIOUS_TRAFFIC"; then
+            echo 'Rollback traffic snapshot is empty.' >&2
+            exit 2
+          fi
+          if ! printf '%s' "$CANDIDATE_REVISION" | grep -Eq '^[a-z][a-z0-9-]{0,62}$'; then
+            echo "Candidate revision name is malformed: $CANDIDATE_REVISION" >&2
+            exit 2
+          fi
+
+          PROMOTION_STARTED=false
+          rollback() {
+            if test "$PROMOTION_STARTED" = true; then
+              echo "[promotion-rollback] restoring prior traffic: $PREVIOUS_TRAFFIC" >&2
+              gcloud run services update-traffic "$PROOFFLEET_CLOUDRUN_SERVICE" \
+                --project="$GCP_PROJECT_ID" --region="$GCP_REGION" \
+                --to-revisions="$PREVIOUS_TRAFFIC" --quiet \
+                || echo '[promotion-rollback] ROLLBACK_FAILED' >&2
+            fi
+          }
+          trap rollback ERR
+
+          PROMOTION_STARTED=true
+          gcloud run services update-traffic "$PROOFFLEET_CLOUDRUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" \
+            --to-revisions="${CANDIDATE_REVISION}=100" --quiet
+
+          POST_SERVICE_JSON="$RUNNER_TEMP/promotion-service-after.json"
+          gcloud run services describe "$PROOFFLEET_CLOUDRUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format=json > "$POST_SERVICE_JSON"
+
+          node - "$POST_SERVICE_JSON" "$CANDIDATE_REVISION" <<'NODE'
+          const fs = require('fs');
+          const [servicePath, revisionName] = process.argv.slice(2);
+          const service = JSON.parse(fs.readFileSync(servicePath, 'utf8'));
+          const traffic = Array.isArray(service.status?.traffic) ? service.status.traffic : [];
+          const candidatePercent = traffic
+            .filter((t) => t.revisionName === revisionName)
+            .reduce((sum, t) => sum + Number(t.percent || 0), 0);
+          const otherPositive = traffic.filter((t) => t.revisionName !== revisionName && Number(t.percent || 0) > 0);
+          if (candidatePercent !== 100) throw new Error(`post-promotion candidate traffic is ${candidatePercent}, expected 100`);
+          if (otherPositive.length) throw new Error(`other revisions still receive positive traffic: ${JSON.stringify(otherPositive)}`);
+
+          const serviceUrl = String(service.status?.url || '');
+          if (!/^https:\/\//.test(serviceUrl)) throw new Error('Cloud Run service URL missing after promotion');
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/promotion-service-url.txt', serviceUrl + '\n');
+
+          const receiptPath = 'gcp-promotion-receipt.json';
+          const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          if (receipt.adkCanaryObserved !== true) throw new Error('promotion receipt lost required ADK canary proof before traffic mutation');
+          receipt.outcome = 'OBSERVED_100_PERCENT_TRAFFIC';
+          receipt.postPromotionTrafficPercent = candidatePercent;
+          receipt.otherPositiveTrafficTargets = 0;
+          receipt.serviceUrl = serviceUrl;
+          receipt.providerTrafficObservedAt = new Date().toISOString();
+          fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
+          NODE
+
+          SERVICE_URL="$(cat "$RUNNER_TEMP/promotion-service-url.txt")"
+          ready=false
+          for _ in $(seq 1 40); do
+            if curl --fail --silent --show-error --max-time 5 \
+              "$SERVICE_URL/api/health" > "$RUNNER_TEMP/promotion-service-health.json"; then
+              ready=true
+              break
+            fi
+            sleep 0.5
+          done
+          if test "$ready" != true; then
+            echo 'Promoted service failed /api/health; rollback is required.' >&2
+            false
+          fi
+
+          node - <<'NODE'
+          const fs = require('fs');
+          const health = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/promotion-service-health.json', 'utf8'));
+          if (!health || typeof health !== 'object' || Array.isArray(health)) throw new Error('promoted service health payload is not a JSON object');
+          const receiptPath = 'gcp-promotion-receipt.json';
+          const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          receipt.serviceHttpHealthObserved = true;
+          receipt.healthEndpoint = '/api/health';
+          receipt.healthObservedAt = new Date().toISOString();
+          fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
+          console.log('[promotion] exact candidate serves 100% traffic, retains observed ADK proof, and passed /api/health');
+          NODE
+
+          PROMOTION_STARTED=false
+          trap - ERR
+
+      - name: Upload promotion receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: prooffleet-gcp-promotion-${{ env.EXPECTED_SOURCE_REVISION }}
+          path: gcp-promotion-receipt.json
+          if-no-files-found: error
+          retention-days: 30

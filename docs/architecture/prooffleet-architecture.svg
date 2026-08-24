@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker>
+  <style>
+    .title{font:700 30px sans-serif;fill:#0f172a}.subtitle{font:400 17px sans-serif;fill:#475569}
+    .zone{fill:#fff;stroke-width:2}.zlabel{font:700 19px sans-serif;fill:#0f172a}
+    .box{fill:#fff;stroke:#64748b;stroke-width:1.6;rx:14}.blue{fill:#eff6ff;stroke:#2563eb}.green{fill:#ecfdf5;stroke:#059669}.amber{fill:#fffbeb;stroke:#d97706}.purple{fill:#f5f3ff;stroke:#7c3aed}.red{fill:#fef2f2;stroke:#dc2626}
+    .text{font:600 14px sans-serif;fill:#0f172a}.small{font:400 12px sans-serif;fill:#334155}.tiny{font:400 11px sans-serif;fill:#475569}
+    .line{stroke:#64748b;stroke-width:2;fill:none;marker-end:url(#arrow)}.dash{stroke:#94a3b8;stroke-width:1.8;stroke-dasharray:7 6;fill:none;marker-end:url(#arrow)}
+  </style>
+</defs>
+<rect width="1600" height="1100" fill="white"/>
+<text x="800" y="48" text-anchor="middle" class="title">ProofFleet — Evidence-First Fortified Enterprise Fleet</text>
+<text x="800" y="78" text-anchor="middle" class="subtitle">Google ADK + Gemini 3.7 · explicit consent · authoritative readback · live Cloud Run proof observed</text>
+
+<!-- Entry -->
+<rect x="55" y="110" width="460" height="210" rx="22" class="zone" stroke="#bfdbfe"/>
+<text x="80" y="140" class="zlabel">Entry + Google AI</text>
+<rect x="85" y="175" width="145" height="54" class="box"/><text x="157" y="198" text-anchor="middle" class="text">Human Operator</text><text x="157" y="216" text-anchor="middle" class="small">explicit approval</text>
+<rect x="290" y="175" width="185" height="54" class="box blue"/><text x="382" y="198" text-anchor="middle" class="text">Google ADK</text><text x="382" y="216" text-anchor="middle" class="small">gemini-3.7-flash</text>
+<rect x="85" y="250" width="160" height="48" class="box"/><text x="165" y="279" text-anchor="middle" class="text">React + TypeScript UI</text>
+<rect x="290" y="250" width="185" height="48" class="box green"/><text x="382" y="279" text-anchor="middle" class="text">Express API + FleetRunner</text>
+<path d="M157 229 L165 250" class="line"/><path d="M245 274 L290 274" class="line"/>
+
+<!-- Agents -->
+<rect x="545" y="110" width="1000" height="350" rx="22" class="zone" stroke="#bbf7d0"/>
+<text x="570" y="140" class="zlabel">8 Core Roles — enforced authority separation</text>
+
+<g>
+<rect x="575" y="175" width="210" height="70" class="box blue"/><text x="680" y="198" text-anchor="middle" class="text">1 Orchestrator</text><text x="680" y="218" text-anchor="middle" class="small">ADK + Gemini 3.7 · planning</text><text x="680" y="236" text-anchor="middle" class="tiny">no final verdict</text>
+<rect x="820" y="175" width="210" height="70" class="box blue"/><text x="925" y="198" text-anchor="middle" class="text">2 Scout</text><text x="925" y="218" text-anchor="middle" class="small">ADK + Gemini 3.7 · context</text><text x="925" y="236" text-anchor="middle" class="tiny">ungrounded without real tool</text>
+<rect x="1065" y="175" width="210" height="70" class="box"/><text x="1170" y="198" text-anchor="middle" class="text">3 Builder</text><text x="1170" y="218" text-anchor="middle" class="small">deterministic-runtime</text><text x="1170" y="236" text-anchor="middle" class="tiny">artifact preparation</text>
+<rect x="1310" y="175" width="205" height="70" class="box"/><text x="1412" y="198" text-anchor="middle" class="text">4 Analyst</text><text x="1412" y="218" text-anchor="middle" class="small">deterministic-runtime</text><text x="1412" y="236" text-anchor="middle" class="tiny">no fake confidence score</text>
+<rect x="575" y="285" width="210" height="70" class="box"/><text x="680" y="308" text-anchor="middle" class="text">5 Sentinel</text><text x="680" y="328" text-anchor="middle" class="small">deterministic-runtime</text><text x="680" y="346" text-anchor="middle" class="tiny">security + permissions</text>
+<rect x="820" y="285" width="210" height="70" class="box"/><text x="925" y="308" text-anchor="middle" class="text">6 Auditor</text><text x="925" y="328" text-anchor="middle" class="small">integrity only</text><text x="925" y="346" text-anchor="middle" class="tiny">cannot replace Judge</text>
+<rect x="1065" y="285" width="210" height="70" class="box amber"/><text x="1170" y="308" text-anchor="middle" class="text">7 Gatekeeper</text><text x="1170" y="328" text-anchor="middle" class="small">OperationSpec + consent</text><text x="1170" y="346" text-anchor="middle" class="tiny">never auto-approves</text>
+<rect x="1310" y="285" width="205" height="70" class="box"/><text x="1412" y="308" text-anchor="middle" class="text">8 Operator</text><text x="1412" y="328" text-anchor="middle" class="small">authorized effects only</text><text x="1412" y="346" text-anchor="middle" class="tiny">cannot self-judge</text>
+</g>
+<path d="M785 210 L820 210" class="line"/><path d="M1030 210 L1065 210" class="line"/><path d="M1275 210 L1310 210" class="line"/>
+<path d="M1412 245 L1412 265 L680 265 L680 285" class="line"/>
+<path d="M785 320 L820 320" class="line"/><path d="M1030 320 L1065 320" class="line"/><path d="M1275 320 L1310 320" class="line"/>
+<rect x="770" y="382" width="340" height="50" class="box"/><text x="940" y="403" text-anchor="middle" class="text">Memory Store</text><text x="940" y="421" text-anchor="middle" class="small">context only — never truth</text>
+<path d="M680 245 L680 405 L770 405" class="dash"/><path d="M925 245 L925 382" class="dash"/>
+
+<!-- Consent/effect -->
+<rect x="55" y="500" width="760" height="285" rx="22" class="zone" stroke="#fed7aa"/>
+<text x="80" y="530" class="zlabel">Consent + bounded external effect</text>
+<polygon points="220,575 360,630 220,685 80,630" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+<text x="220" y="622" text-anchor="middle" class="text">Explicit operation-bound</text><text x="220" y="642" text-anchor="middle" class="text">human consent</text>
+<rect x="430" y="575" width="160" height="65" class="box"/><text x="510" y="602" text-anchor="middle" class="text">Operator</text><text x="510" y="621" text-anchor="middle" class="small">APPROVED only</text>
+<rect x="625" y="575" width="160" height="65" class="box"/><text x="705" y="598" text-anchor="middle" class="text">OperationExecutor</text><text x="705" y="617" text-anchor="middle" class="small">idempotency +</text><text x="705" y="633" text-anchor="middle" class="tiny">readback-before-retry</text>
+<rect x="430" y="690" width="160" height="52" class="box red"/><text x="510" y="712" text-anchor="middle" class="text">REJECTED</text><text x="510" y="730" text-anchor="middle" class="small">mission aborts</text>
+<path d="M360 630 L430 607" class="line"/><text x="390" y="595" class="tiny">APPROVED</text>
+<path d="M360 640 L430 716" class="dash"/><text x="375" y="690" class="tiny">REJECTED</text>
+<path d="M590 607 L625 607" class="line"/>
+
+<!-- GCP -->
+<rect x="845" y="500" width="700" height="285" rx="22" class="zone" stroke="#fde68a"/>
+<text x="870" y="530" class="zlabel">Google Cloud provider boundaries</text>
+<rect x="880" y="555" width="310" height="66" class="box amber"/><text x="1035" y="578" text-anchor="middle" class="text">GitHub OIDC / WIF</text><text x="1035" y="598" text-anchor="middle" class="small">short-lived deploy identity</text><text x="1035" y="614" text-anchor="middle" class="tiny">no SA JSON key</text>
+<rect x="1225" y="555" width="280" height="66" class="box green"/><text x="1365" y="578" text-anchor="middle" class="text">Cloud Run candidate</text><text x="1365" y="598" text-anchor="middle" class="small">revision readback · OBSERVED</text><text x="1365" y="614" text-anchor="middle" class="tiny">0% normal traffic</text>
+<rect x="880" y="650" width="310" height="66" class="box green"/><text x="1035" y="673" text-anchor="middle" class="text">Artifact Registry</text><text x="1035" y="693" text-anchor="middle" class="small">OCI index → linux/amd64 child</text><text x="1035" y="709" text-anchor="middle" class="tiny">registry bytes re-hashed</text>
+<rect x="1225" y="650" width="280" height="66" class="box amber"/><text x="1365" y="673" text-anchor="middle" class="text">Remaining provider boundary</text><text x="1365" y="693" text-anchor="middle" class="small">Firestore not OBSERVED</text><text x="1365" y="709" text-anchor="middle" class="tiny">ADK live canary NOT_RUN</text>
+<path d="M1190 588 L1225 588" class="line"/><path d="M1035 621 L1035 650" class="line"/><path d="M1190 683 L1225 683" class="line"/>
+<path d="M785 607 L880 588" class="line"/><text x="820" y="580" class="tiny">explicit authority</text>
+
+<!-- Evidence -->
+<rect x="180" y="835" width="1240" height="215" rx="22" class="zone" stroke="#ddd6fe"/>
+<text x="205" y="865" class="zlabel">Evidence + independent truth boundary</text>
+<rect x="230" y="900" width="350" height="62" class="box green"/><text x="405" y="923" text-anchor="middle" class="text">Evidence Ledger + SHA-256 Receipt Chain</text><text x="405" y="944" text-anchor="middle" class="small">internal integrity ≠ external-world truth</text>
+<rect x="640" y="900" width="220" height="62" class="box green"/><text x="750" y="923" text-anchor="middle" class="text">Independent Verifier</text><text x="750" y="944" text-anchor="middle" class="small">read-only snapshots</text>
+<rect x="920" y="900" width="200" height="62" class="box purple"/><text x="1020" y="936" text-anchor="middle" class="text">Non-mutating Judge</text>
+<rect x="1170" y="885" width="200" height="40" class="box green"/><text x="1270" y="910" text-anchor="middle" class="text">VERIFIED</text>
+<rect x="1170" y="935" width="200" height="40" class="box amber"/><text x="1270" y="960" text-anchor="middle" class="small">BLOCKED_BY_MISSING_EVIDENCE</text>
+<rect x="1170" y="985" width="200" height="40" class="box red"/><text x="1270" y="1010" text-anchor="middle" class="text">CONTRADICTED</text>
+<path d="M580 931 L640 931" class="line"/><path d="M860 931 L920 931" class="line"/><path d="M1120 931 L1170 905" class="line"/><path d="M1120 931 L1170 955" class="line"/><path d="M1120 931 L1170 1005" class="line"/>
+<path d="M1365 621 L1365 805 L580 805 L580 900" class="line"/><text x="1135" y="795" class="tiny">CLOUD_RUN_READBACK + declared source SHA</text>
+<path d="M1035 716 L1035 815 L405 815 L405 900" class="line"/><text x="745" y="805" class="tiny">registry / external-effect evidence enters only after authoritative readback</text>
+
+<text x="800" y="1080" text-anchor="middle" class="subtitle">ProofFleet does not ask you to trust autonomous agents. It gives you evidence to verify what actually happened.</text>
+</svg>

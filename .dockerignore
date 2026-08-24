@@ -1,0 +1,10 @@
+node_modules
+.git
+.github
+.env*
+!.env.example
+gha-creds-*.json
+gcp-live-proof-receipt.json
+coverage
+*.log
+.DS_Store

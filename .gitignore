@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# google-github-actions/auth generated ADC credential file; never commit it.
+gha-creds-*.json
+
+# Runtime proof output belongs in GitHub Actions artifacts, not source control.
+gcp-live-proof-receipt.json

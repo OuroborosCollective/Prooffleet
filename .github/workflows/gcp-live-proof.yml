@@ -1,0 +1,286 @@
+name: ProofFleet Live GCP Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE to authorize exactly one operation-bound Firestore proof write.
+        required: true
+        type: string
+  pull_request:
+    branches:
+      - main
+    types:
+      - labeled
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: prooffleet-live-gcp-proof
+  cancel-in-progress: false
+
+jobs:
+  live-gcp-proof:
+    name: live-gcp-proof
+    if: >-
+      (github.event_name == 'workflow_dispatch') ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'proofleet-live-gcp-once' &&
+        github.actor == 'OuroborosCollective' &&
+        github.event.pull_request.user.login == 'OuroborosCollective' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GCP_PROJECT_ID: project-b29d4703-a302-4b05-b2e
+      GCP_REGION: europe-west1
+      GCP_WIF_PROVIDER: projects/511695074775/locations/global/workloadIdentityPools/prooffleet-github/providers/prooffleet-repo
+      GCP_WIF_SERVICE_ACCOUNT: prooffleet-github@project-b29d4703-a302-4b05-b2e.iam.gserviceaccount.com
+      PROOFFLEET_CLOUDRUN_SERVICE: prooffleet
+      PROOFFLEET_FIRESTORE_COLLECTION: prooffleet-live-proofs
+      EXPECTED_GITHUB_REPOSITORY_ID: '1339097875'
+      EXPECTED_GITHUB_REPOSITORY_OWNER_ID: '266194342'
+      EXPECTED_GITHUB_ACTOR_ID: '266194342'
+      PROOFFLEET_SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      PROOFFLEET_LIVE_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || 'I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE' }}
+      PROOFFLEET_GITHUB_RUN_ID: ${{ github.run_id }}
+      PROOFFLEET_GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+      PROOFFLEET_GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+      PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID: ${{ github.repository_owner_id }}
+      PROOFFLEET_GITHUB_ACTOR_ID: ${{ github.actor_id }}
+      EVENT_ACTION: ${{ github.event.action }}
+      EVENT_ACTOR: ${{ github.actor }}
+      PR_LABEL_NAME: ${{ github.event.label.name }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+      PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      PR_HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id }}
+
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROOFFLEET_SOURCE_REVISION }}
+          persist-credentials: false
+
+      - name: Fail closed on missing live-proof configuration or authority replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GCP_WIF_PROVIDER
+            GCP_WIF_SERVICE_ACCOUNT
+            PROOFFLEET_CLOUDRUN_SERVICE
+            PROOFFLEET_FIRESTORE_COLLECTION
+            EXPECTED_GITHUB_REPOSITORY_ID
+            EXPECTED_GITHUB_REPOSITORY_OWNER_ID
+            EXPECTED_GITHUB_ACTOR_ID
+            PROOFFLEET_SOURCE_REVISION
+            PROOFFLEET_GITHUB_RUN_ID
+            PROOFFLEET_GITHUB_RUN_ATTEMPT
+            PROOFFLEET_GITHUB_REPOSITORY_ID
+            PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID
+            PROOFFLEET_GITHUB_ACTOR_ID
+          )
+          for key in "${required[@]}"; do
+            if test -z "${!key:-}"; then
+              echo "Missing required live-proof value: ${key}" >&2
+              exit 2
+            fi
+          done
+          if test "$PROOFFLEET_LIVE_CONFIRMATION" != 'I_APPROVE_PROOFFLEET_FIRESTORE_PROOF_WRITE'; then
+            echo 'Exact live-proof confirmation phrase is required.' >&2
+            exit 2
+          fi
+          if ! printf '%s' "$PROOFFLEET_SOURCE_REVISION" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo 'PROOFFLEET_SOURCE_REVISION must be an exact lowercase 40-character Git SHA.' >&2
+            exit 2
+          fi
+          ACTUAL_SOURCE_REVISION="$(git rev-parse HEAD)"
+          if test "$ACTUAL_SOURCE_REVISION" != "$PROOFFLEET_SOURCE_REVISION"; then
+            echo "Refusing mismatched checkout: expected=$PROOFFLEET_SOURCE_REVISION actual=$ACTUAL_SOURCE_REVISION" >&2
+            exit 2
+          fi
+          if ! printf '%s' "$GCP_WIF_PROVIDER" | grep -Eq '^projects/[1-9][0-9]*/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$'; then
+            echo 'GCP_WIF_PROVIDER is malformed.' >&2
+            exit 2
+          fi
+          if ! printf '%s' "$GCP_WIF_SERVICE_ACCOUNT" | grep -Eq '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$'; then
+            echo 'GCP_WIF_SERVICE_ACCOUNT is malformed.' >&2
+            exit 2
+          fi
+          for key in \
+            EXPECTED_GITHUB_REPOSITORY_ID EXPECTED_GITHUB_REPOSITORY_OWNER_ID EXPECTED_GITHUB_ACTOR_ID \
+            PROOFFLEET_GITHUB_RUN_ID PROOFFLEET_GITHUB_RUN_ATTEMPT PROOFFLEET_GITHUB_REPOSITORY_ID \
+            PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID PROOFFLEET_GITHUB_ACTOR_ID; do
+            if ! printf '%s' "${!key}" | grep -Eq '^[1-9][0-9]*$'; then
+              echo "Immutable GitHub identity ${key} is malformed." >&2
+              exit 2
+            fi
+          done
+          if test "$PROOFFLEET_GITHUB_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+            echo 'GitHub repository ID does not match the approved live-proof repository.' >&2
+            exit 2
+          fi
+          if test "$PROOFFLEET_GITHUB_REPOSITORY_OWNER_ID" != "$EXPECTED_GITHUB_REPOSITORY_OWNER_ID"; then
+            echo 'GitHub repository owner ID does not match the approved live-proof owner.' >&2
+            exit 2
+          fi
+          if test "$PROOFFLEET_GITHUB_ACTOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+            echo 'GitHub actor ID is not authorized for the live-proof mutation.' >&2
+            exit 2
+          fi
+          if test "$PROOFFLEET_GITHUB_RUN_ATTEMPT" != '1'; then
+            echo 'Live-proof mutation requires a fresh explicit trigger; GitHub re-runs are blocked before provider authentication.' >&2
+            exit 2
+          fi
+
+          if test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'; then
+            if test "$PROOFFLEET_SOURCE_REVISION" != "$GITHUB_SHA"; then
+              echo 'Manual live proof must execute the exact selected branch revision.' >&2
+              exit 2
+            fi
+          elif test "$GITHUB_EVENT_NAME" = 'pull_request'; then
+            for key in EVENT_ACTION EVENT_ACTOR PR_LABEL_NAME PR_AUTHOR PR_AUTHOR_ID PR_HEAD_REPOSITORY PR_HEAD_REPOSITORY_ID; do
+              if test -z "${!key:-}"; then
+                echo "Missing pull-request authority value: ${key}" >&2
+                exit 2
+              fi
+            done
+            if test "$EVENT_ACTION" != 'labeled' || test "$PR_LABEL_NAME" != 'proofleet-live-gcp-once'; then
+              echo 'Live proof accepts only the dedicated one-shot owner label.' >&2
+              exit 2
+            fi
+            if test "$EVENT_ACTOR" != 'OuroborosCollective' || test "$PR_AUTHOR" != 'OuroborosCollective'; then
+              echo 'Pre-merge live proof requires owner actor and owner-authored PR.' >&2
+              exit 2
+            fi
+            if test "$PR_AUTHOR_ID" != "$EXPECTED_GITHUB_ACTOR_ID"; then
+              echo 'Pull-request author ID does not match the approved operator.' >&2
+              exit 2
+            fi
+            if test "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" || test "$PR_HEAD_REPOSITORY_ID" != "$EXPECTED_GITHUB_REPOSITORY_ID"; then
+              echo 'Refusing live proof from a foreign or mismatched repository.' >&2
+              exit 2
+            fi
+          else
+            echo "Unsupported live-proof trigger: $GITHUB_EVENT_NAME" >&2
+            exit 2
+          fi
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Prove active federated credential principal and project
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
+          ACTIVE_PROJECT="$(gcloud config get-value project 2>/dev/null)"
+          if test "$ACTIVE_ACCOUNT" != "$GCP_WIF_SERVICE_ACCOUNT"; then
+            echo 'Active Google credential principal does not match the configured WIF service account.' >&2
+            exit 2
+          fi
+          if test "$ACTIVE_PROJECT" != "$GCP_PROJECT_ID"; then
+            echo 'Active Google credential project does not match the configured project.' >&2
+            exit 2
+          fi
+          PROJECT_NUMBER="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')"
+          if ! printf '%s' "$PROJECT_NUMBER" | grep -Eq '^[1-9][0-9]*$'; then
+            echo 'Authenticated Google project-number readback is malformed.' >&2
+            exit 2
+          fi
+          PROVIDER_PROJECT_NUMBER="$(printf '%s' "$GCP_WIF_PROVIDER" | sed -E 's#^projects/([0-9]+)/.*#\1#')"
+          if test "$PROJECT_NUMBER" != "$PROVIDER_PROJECT_NUMBER"; then
+            echo 'Authenticated Google project number does not match WIF provider project number.' >&2
+            exit 2
+          fi
+          printf 'PROOFFLEET_WIF_PRINCIPAL=%s\n' "$ACTIVE_ACCOUNT" >> "$GITHUB_ENV"
+          printf 'PROOFFLEET_GCP_PROJECT_NUMBER=%s\n' "$PROJECT_NUMBER" >> "$GITHUB_ENV"
+          echo '[wif-evidence] active credential principal and project identity observed through authenticated gcloud readback'
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install immutable dependency graph
+        run: npm ci --no-audit --no-fund
+
+      - name: Run authoritative Cloud Run + Firestore proof
+        run: npx tsx scripts/gcp-live-proof.ts
+
+      - name: Publish receipt to job summary
+        if: always()
+        shell: bash
+        run: |
+          if test -f gcp-live-proof-receipt.json; then
+            {
+              echo '### ProofFleet live GCP proof receipt'
+              echo '```json'
+              cat gcp-live-proof-receipt.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload live proof receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prooffleet-gcp-live-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.PROOFFLEET_SOURCE_REVISION }}
+          path: gcp-live-proof-receipt.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Require observed credential-bound live proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const r = JSON.parse(fs.readFileSync('gcp-live-proof-receipt.json', 'utf8'));
+          if (r.schemaVersion !== 'prooffleet.gcp-live-proof.v3') {
+            console.error('live-proof receipt schema mismatch');
+            process.exit(2);
+          }
+          if (r.outcome !== 'OBSERVED') {
+            console.error(r.reason);
+            process.exit(2);
+          }
+          if (!/^[a-f0-9]{64}$/.test(String(r.executionCredentialBindingHash || ''))) {
+            console.error('execution/credential binding hash missing or malformed');
+            process.exit(2);
+          }
+          if (!/^[a-f0-9]{64}$/.test(String(r.receiptHash || ''))) {
+            console.error('live-proof receipt hash missing or malformed');
+            process.exit(2);
+          }
+          if (r.authenticatedGcpIdentity?.principal !== process.env.GCP_WIF_SERVICE_ACCOUNT) {
+            console.error('receipt principal does not match configured WIF service account');
+            process.exit(2);
+          }
+          if (r.sourceRevision !== process.env.PROOFFLEET_SOURCE_REVISION) {
+            console.error('receipt source revision does not match the exact triggered source');
+            process.exit(2);
+          }
+          console.log('OBSERVED credential-bound live GCP proof for', r.sourceRevision);
+          NODE
