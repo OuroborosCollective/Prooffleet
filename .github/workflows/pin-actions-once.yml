@@ -3,7 +3,7 @@ name: ProofFleet One-Shot Action Pinning
 on:
   push:
     branches:
-      - hardening/fortified-fleet
+      - hardening/issue-2-action-sha-pins
     paths:
       - .github/workflows/pin-actions-once.yml
       - scripts/pin-github-actions.mjs
@@ -22,13 +22,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout exact feature branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: hardening/fortified-fleet
+          ref: hardening/issue-2-action-sha-pins
           fetch-depth: 1
           persist-credentials: true
       - name: Setup Node.js 22
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           package-manager-cache: false
@@ -59,4 +59,4 @@ jobs:
           git add .github/workflows tests
           git diff --cached --check
           git commit -m 'security: pin privileged GitHub Actions to reviewed SHAs'
-          git push origin HEAD:hardening/fortified-fleet
+          git push origin HEAD:hardening/issue-2-action-sha-pins
