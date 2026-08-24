@@ -69,6 +69,32 @@ describe('ReceiptChain', () => {
     expect(result.isValid).toBe(false);
     expect(result.brokenAt).toBe(r1.receiptId);
   });
+
+  it('exportReceipts returns a detached snapshot: exported receipt mutation cannot alter canonical truth', () => {
+    const chain = new ReceiptChain();
+    chain.issueReceipt({
+      missionId: 'm1', missionRevision: 1, manifestHash: MANIFEST,
+      payloadHash: 'a'.repeat(64), createdBy: 'auditor',
+    });
+    chain.issueReceipt({
+      missionId: 'm1', missionRevision: 1, manifestHash: MANIFEST,
+      payloadHash: 'b'.repeat(64), createdBy: 'auditor',
+    });
+    const canonicalBefore = chain.exportReceipts();
+
+    const exported = chain.exportReceipts();
+    exported[0] = {
+      ...exported[0],
+      missionId: 'forged-mission',
+      payloadHash: 'f'.repeat(64),
+    };
+    exported.push(structuredClone(exported[0]));
+
+    expect(chain.verifyChain(exported).isValid).toBe(false);
+    expect(chain.verifyChain().isValid).toBe(true);
+    expect(chain.exportReceipts()).toEqual(canonicalBefore);
+    expect(chain.exportReceipts()).toHaveLength(2);
+  });
 });
 
 describe('EvidenceLedger', () => {
