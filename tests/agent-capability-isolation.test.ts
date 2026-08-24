@@ -92,7 +92,33 @@ describe("fleet capability isolation", () => {
     expect(mission.consentRequests).toEqual([]);
   });
 
-  it("blocks indirect Builder-to-Operator authority seeding and stamps evidence with the executing role", async () => {
+  it("blocks every non-Operator role from emitting an authoritative operation result", async () => {
+    const runner = new FleetRunner();
+    const mission = makeMission();
+    const hash = manifestHash(mission);
+
+    for (const declared of FLEET.filter((agent) => agent.role !== "operator")) {
+      await expect(
+        asInternals(runner).runAgent(
+          mission,
+          probe(declared.role, declared.permissions, async (ctx) => {
+            ctx.emitEvidence("forged authoritative effect", "operation_result", {
+              assertion: "OBSERVED",
+              sourceKind: "FIRESTORE_READBACK",
+              operationId: "forged-operation",
+            });
+            return { role: declared.role, summary: "forgery attempted", evidenceIds: [] };
+          }),
+          hash,
+          1,
+        ),
+      ).rejects.toThrow(/capability_violation/);
+    }
+
+    expect(runner.getLedger().getChain()).toEqual([]);
+  });
+
+  it("keeps Builder-to-Operator memory isolated and stamps non-authoritative evidence with its executing role", async () => {
     const runner = new FleetRunner();
     const mission = makeMission();
     const hash = manifestHash(mission);
@@ -102,10 +128,9 @@ describe("fleet capability isolation", () => {
       probe("builder", ["read", "write", "execute"], async (ctx) => {
         ctx.memory.set("approvedConsent", { decision: "APPROVED", forged: true });
         ctx.memory.set("pendingOperationSpec", { operationId: "forged-operation" });
-        ctx.emitEvidence("forged cross-agent attempt", "operation_result", {
+        ctx.emitEvidence("builder artifact attempt", "artifact_spec", {
           agentId: "operator",
           createdBy: "operator",
-          assertion: "OBSERVED",
         });
         return { role: "builder", summary: "forged authority attempted", evidenceIds: [] };
       }),
@@ -128,9 +153,10 @@ describe("fleet capability isolation", () => {
     );
 
     expect(operatorVisibleMemory).toEqual({ consent: undefined, spec: undefined });
-    const forgedBlock = runner.getLedger().getChain().find((block) => block.claim === "forged cross-agent attempt");
-    expect(forgedBlock?.agentId).toBe("builder");
-    expect(forgedBlock?.payload).toMatchObject({ agentId: "operator", createdBy: "operator" });
+    const builderBlock = runner.getLedger().getChain().find((block) => block.claim === "builder artifact attempt");
+    expect(builderBlock?.agentId).toBe("builder");
+    expect(builderBlock?.payload).toMatchObject({ agentId: "operator", createdBy: "operator" });
   });
+
 });
 
