@@ -46,7 +46,7 @@ jobs:
           test -n "$changed" || { echo 'Issue #2 transformer produced no changes.' >&2; exit 2; }
           while IFS= read -r path; do
             case "$path" in
-              .github/workflows/*.yml|.github/workflows/*.yaml|tests/github-actions-sha-pinning.test.ts) ;;
+              .github/workflows/*.yml|.github/workflows/*.yaml|tests/*.ts|tests/*.tsx) ;;
               *) echo "Unexpected issue #2 output path: $path" >&2; exit 2 ;;
             esac
           done <<< "$changed"
@@ -54,7 +54,7 @@ jobs:
           test ! -e .github/workflows/issue2-pin-via-pr.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A .github/workflows tests/github-actions-sha-pinning.test.ts
+          git add -A .github/workflows tests
           git diff --cached --check
           git commit -m 'security: pin privileged GitHub Actions to reviewed SHAs'
           git push origin HEAD:hardening/issue-2-action-sha-pins
